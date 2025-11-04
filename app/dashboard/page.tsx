@@ -24,6 +24,7 @@ export default function Dashboard() {
   const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
+  const [paginatedProducts, setPaginatedProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -38,31 +39,68 @@ export default function Dashboard() {
   const [fulfillmentFilter, setFulfillmentFilter] = useState<string>('todos');
 
   useEffect(() => {
-    fetchProducts(0, itemsPerPage);
-  }, [itemsPerPage]);
+    fetchProducts();
+  }, []);
 
   useEffect(() => {
     filterProducts();
   }, [searchTerm, products, fulfillmentFilter]);
+  
+  useEffect(() => {
+    paginateProducts();
+  }, [filteredProducts, currentPage, itemsPerPage]);
 
-  const fetchProducts = async (offset: number, limit: number) => {
+  const paginateProducts = () => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    const paginated = filteredProducts.slice(startIndex, endIndex);
+    setPaginatedProducts(paginated);
+  };
+
+  const fetchProducts = async () => {
     try {
-      offset === 0 ? setLoading(true) : setLoadingMore(true);
-      const response = await fetch(`/api/products?offset=${offset}&limit=${limit}`);
+      setLoading(true);
       
-      if (response.status === 401) {
+      // Primero obtenemos el total para saber cuántos productos hay
+      const initialResponse = await fetch('/api/products?offset=0&limit=50');
+      
+      if (initialResponse.status === 401) {
         router.push('/');
         return;
       }
 
-      if (!response.ok) {
+      if (!initialResponse.ok) {
         throw new Error('Error cargando productos');
       }
 
-      const data = await response.json();
-      setProducts(data.products);
-      setFilteredProducts(data.products);
-      setTotal(data.total);
+      const initialData = await initialResponse.json();
+      const totalProducts = initialData.total;
+      setTotal(totalProducts);
+      
+      // Cargar todos los productos en batches de 50
+      const allProducts: Product[] = [...initialData.products];
+      const batchSize = 50;
+      
+      // Calcular cuántos batches necesitamos
+      const totalBatches = Math.ceil(totalProducts / batchSize);
+      
+      // Cargar el resto de los batches
+      for (let i = 1; i < totalBatches; i++) {
+        const offset = i * batchSize;
+        const response = await fetch(`/api/products?offset=${offset}&limit=${batchSize}`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          allProducts.push(...data.products);
+          
+          // Actualizar progreso
+          setLoadingMore(true);
+        }
+      }
+      
+      setProducts(allProducts);
+      setFilteredProducts(allProducts);
+      
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
@@ -107,9 +145,7 @@ export default function Dashboard() {
   };
 
   const handlePageChange = (newPage: number) => {
-    const offset = (newPage - 1) * itemsPerPage;
     setCurrentPage(newPage);
-    fetchProducts(offset, itemsPerPage);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -118,9 +154,9 @@ export default function Dashboard() {
     setCurrentPage(1);
   };
 
-  const totalPages = Math.ceil(total / itemsPerPage);
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
   const startItem = (currentPage - 1) * itemsPerPage + 1;
-  const endItem = Math.min(currentPage * itemsPerPage, total);
+  const endItem = Math.min(currentPage * itemsPerPage, filteredProducts.length);
 
   const getStockStatus = (quantity: number): { label: string; color: string } => {
     if (quantity <= 5) {
@@ -202,7 +238,16 @@ export default function Dashboard() {
     });
     ws['!cols'] = colWidths;
 
-    const fileName = `productos-mercadolibre-pag${currentPage}-${new Date().toISOString().split('T')[0]}.xlsx`;
+    // Nombre del archivo más descriptivo
+    let fileName = `productos-mercadolibre`;
+    if (searchTerm) {
+      fileName += `-busqueda`;
+    }
+    if (fulfillmentFilter !== 'todos') {
+      fileName += `-${fulfillmentFilter}`;
+    }
+    fileName += `-${filteredProducts.length}-productos-${new Date().toISOString().split('T')[0]}.xlsx`;
+    
     XLSX.writeFile(wb, fileName);
   };
 
@@ -216,7 +261,13 @@ export default function Dashboard() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Cargando productos...</p>
+          <p className="text-gray-600 font-semibold">Cargando todos los productos...</p>
+          <p className="text-gray-500 text-sm mt-2">Esto puede tardar 15-30 segundos</p>
+          {loadingMore && total > 0 && (
+            <p className="text-blue-600 text-sm mt-2">
+              Cargando... ({products.length} de {total})
+            </p>
+          )}
         </div>
       </div>
     );
@@ -303,7 +354,7 @@ export default function Dashboard() {
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
-                  Exportar página actual
+                  Exportar a Excel ({filteredProducts.length})
                 </button>
               </div>
             </div>
@@ -350,9 +401,9 @@ export default function Dashboard() {
               </div>
               
               <div className="text-sm text-gray-600">
-                <span className="font-semibold">Total: {total.toLocaleString()}</span> productos
+                <span className="font-semibold">Total: {products.length.toLocaleString()}</span> productos cargados
                 {(searchTerm || fulfillmentFilter !== 'todos') && (
-                  <span> • Mostrando <span className="font-semibold">{filteredProducts.length}</span> resultados</span>
+                  <span> • Mostrando <span className="font-semibold">{filteredProducts.length}</span> resultados • Página {currentPage} de {totalPages}</span>
                 )}
                 {!searchTerm && fulfillmentFilter === 'todos' && (
                   <span> • Viendo del <span className="font-semibold">{startItem}</span> al <span className="font-semibold">{endItem}</span></span>
@@ -364,15 +415,6 @@ export default function Dashboard() {
 
         {/* Products Table */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-          {loadingMore && (
-            <div className="bg-blue-50 border-b border-blue-200 px-4 py-3 text-center">
-              <div className="flex items-center justify-center gap-2">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                <span className="text-sm text-blue-800">Cargando productos...</span>
-              </div>
-            </div>
-          )}
-          
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -404,7 +446,7 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredProducts.length === 0 ? (
+                {paginatedProducts.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="px-6 py-12 text-center">
                       <div className="text-gray-400">
@@ -416,7 +458,7 @@ export default function Dashboard() {
                     </td>
                   </tr>
                 ) : (
-                  filteredProducts.map((product) => {
+                  paginatedProducts.map((product) => {
                     const stockStatus = getStockStatus(product.available_quantity);
                     const pubStatus = getPublicationStatus(product.status);
 
@@ -470,7 +512,7 @@ export default function Dashboard() {
         </div>
 
         {/* Paginación */}
-        {!searchTerm && fulfillmentFilter === 'todos' && totalPages > 1 && (
+        {totalPages > 1 && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mt-6">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
               {/* Información de página */}
