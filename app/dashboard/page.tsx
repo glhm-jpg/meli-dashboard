@@ -28,19 +28,24 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [total, setTotal] = useState(0);
+  
+  // Estados para paginación
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(50);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
-    fetchProducts();
-  }, []);
+    fetchProducts(0, itemsPerPage);
+  }, [itemsPerPage]);
 
   useEffect(() => {
     filterProducts();
   }, [searchTerm, products]);
 
-  const fetchProducts = async () => {
+  const fetchProducts = async (offset: number, limit: number) => {
     try {
-      setLoading(true);
-      const response = await fetch('/api/products');
+      offset === 0 ? setLoading(true) : setLoadingMore(true);
+      const response = await fetch(`/api/products?offset=${offset}&limit=${limit}`);
       
       if (response.status === 401) {
         router.push('/');
@@ -59,6 +64,7 @@ export default function Dashboard() {
       setError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
@@ -76,6 +82,22 @@ export default function Dashboard() {
     );
     setFilteredProducts(filtered);
   };
+
+  const handlePageChange = (newPage: number) => {
+    const offset = (newPage - 1) * itemsPerPage;
+    setCurrentPage(newPage);
+    fetchProducts(offset, itemsPerPage);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleItemsPerPageChange = (newLimit: number) => {
+    setItemsPerPage(newLimit);
+    setCurrentPage(1);
+  };
+
+  const totalPages = Math.ceil(total / itemsPerPage);
+  const startItem = (currentPage - 1) * itemsPerPage + 1;
+  const endItem = Math.min(currentPage * itemsPerPage, total);
 
   const getStockStatus = (quantity: number): { label: string; color: string } => {
     if (quantity <= 5) {
@@ -158,7 +180,7 @@ export default function Dashboard() {
     });
     ws['!cols'] = colWidths;
 
-    const fileName = `productos-mercadolibre-${new Date().toISOString().split('T')[0]}.xlsx`;
+    const fileName = `productos-mercadolibre-pag${currentPage}-${new Date().toISOString().split('T')[0]}.xlsx`;
     XLSX.writeFile(wb, fileName);
   };
 
@@ -202,6 +224,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
@@ -229,41 +252,82 @@ export default function Dashboard() {
         </div>
       </header>
 
+      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Search and Export */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
-          <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
-            <div className="flex-1 w-full md:w-auto">
-              <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-2">
-                Buscar producto:
-              </label>
-              <input
-                id="search"
-                type="text"
-                placeholder="Buscar por nombre, SKU o ID..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
+          <div className="flex flex-col gap-4">
+            {/* Primera fila: Búsqueda y Exportar */}
+            <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+              <div className="flex-1 w-full md:w-auto">
+                <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-2">
+                  Buscar producto:
+                </label>
+                <input
+                  id="search"
+                  type="text"
+                  placeholder="Buscar por nombre, SKU o ID..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div className="flex items-end">
+                <button
+                  onClick={exportToExcel}
+                  disabled={filteredProducts.length === 0}
+                  className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 whitespace-nowrap"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Exportar página actual
+                </button>
+              </div>
             </div>
-            <div className="flex items-end">
-              <button
-                onClick={exportToExcel}
-                disabled={filteredProducts.length === 0}
-                className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 whitespace-nowrap"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Exportar a Excel ({filteredProducts.length})
-              </button>
+
+            {/* Segunda fila: Selector de cantidad y contador */}
+            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between border-t pt-4">
+              <div className="flex items-center gap-3">
+                <label htmlFor="itemsPerPage" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                  Productos por página:
+                </label>
+                <select
+                  id="itemsPerPage"
+                  value={itemsPerPage}
+                  onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                >
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={200}>200</option>
+                  <option value={500}>500</option>
+                </select>
+              </div>
+              <div className="text-sm text-gray-600">
+                <span className="font-semibold">Total: {total.toLocaleString()}</span> productos
+                {searchTerm && (
+                  <span> • Mostrando <span className="font-semibold">{filteredProducts.length}</span> resultados</span>
+                )}
+                {!searchTerm && (
+                  <span> • Viendo del <span className="font-semibold">{startItem}</span> al <span className="font-semibold">{endItem}</span></span>
+                )}
+              </div>
             </div>
           </div>
-          <p className="text-sm text-gray-600 mt-4">
-            Mostrando {filteredProducts.length} de {total} productos
-          </p>
         </div>
 
+        {/* Products Table */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+          {loadingMore && (
+            <div className="bg-blue-50 border-b border-blue-200 px-4 py-3 text-center">
+              <div className="flex items-center justify-center gap-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                <span className="text-sm text-blue-800">Cargando productos...</span>
+              </div>
+            </div>
+          )}
+          
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -359,6 +423,141 @@ export default function Dashboard() {
             </table>
           </div>
         </div>
+
+        {/* Paginación */}
+        {!searchTerm && totalPages > 1 && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mt-6">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              {/* Información de página */}
+              <div className="text-sm text-gray-600">
+                Página <span className="font-semibold">{currentPage}</span> de <span className="font-semibold">{totalPages}</span>
+              </div>
+
+              {/* Botones de navegación */}
+              <div className="flex items-center gap-2">
+                {/* Primera página */}
+                <button
+                  onClick={() => handlePageChange(1)}
+                  disabled={currentPage === 1}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition"
+                  title="Primera página"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                  </svg>
+                </button>
+
+                {/* Página anterior */}
+                <button
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition"
+                >
+                  Anterior
+                </button>
+
+                {/* Páginas numeradas */}
+                <div className="hidden sm:flex items-center gap-1">
+                  {/* Primera página siempre visible */}
+                  {currentPage > 3 && (
+                    <>
+                      <button
+                        onClick={() => handlePageChange(1)}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition"
+                      >
+                        1
+                      </button>
+                      {currentPage > 4 && <span className="px-2 text-gray-500">...</span>}
+                    </>
+                  )}
+
+                  {/* Páginas cercanas a la actual */}
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    const pageNum = currentPage <= 3 
+                      ? i + 1 
+                      : currentPage >= totalPages - 2
+                        ? totalPages - 4 + i
+                        : currentPage - 2 + i;
+                    
+                    if (pageNum < 1 || pageNum > totalPages) return null;
+                    
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => handlePageChange(pageNum)}
+                        className={`px-3 py-2 border rounded-lg text-sm font-medium transition ${
+                          currentPage === pageNum
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+
+                  {/* Última página siempre visible */}
+                  {currentPage < totalPages - 2 && (
+                    <>
+                      {currentPage < totalPages - 3 && <span className="px-2 text-gray-500">...</span>}
+                      <button
+                        onClick={() => handlePageChange(totalPages)}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition"
+                      >
+                        {totalPages}
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {/* Página siguiente */}
+                <button
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition"
+                >
+                  Siguiente
+                </button>
+
+                {/* Última página */}
+                <button
+                  onClick={() => handlePageChange(totalPages)}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition"
+                  title="Última página"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Input para ir a página específica */}
+              <div className="flex items-center gap-2">
+                <label htmlFor="goToPage" className="text-sm text-gray-600 whitespace-nowrap">
+                  Ir a página:
+                </label>
+                <input
+                  id="goToPage"
+                  type="number"
+                  min="1"
+                  max={totalPages}
+                  placeholder={currentPage.toString()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const page = parseInt((e.target as HTMLInputElement).value);
+                      if (page >= 1 && page <= totalPages) {
+                        handlePageChange(page);
+                        (e.target as HTMLInputElement).value = '';
+                      }
+                    }
+                  }}
+                  className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
