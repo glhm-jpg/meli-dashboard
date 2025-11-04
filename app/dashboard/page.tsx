@@ -148,7 +148,6 @@ export default function Dashboard() {
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
-      second: '2-digit',
     });
   };
 
@@ -226,7 +225,7 @@ export default function Dashboard() {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-yellow-400 rounded-lg flex items-center justify-center">
@@ -253,7 +252,7 @@ export default function Dashboard() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Search and Export */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
           <div className="flex flex-col gap-4">
@@ -332,28 +331,28 @@ export default function Dashboard() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[500px] min-w-[500px]">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[450px] min-w-[450px]">
                     Producto
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
                     SKU
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-16">
                     Stock
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
                     Estado Stock
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-36">
                     Estado Publicación
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
                     Fulfillment
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
                     Última actualización
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-28">
                     Precio
                   </th>
                 </tr>
@@ -377,7 +376,7 @@ export default function Dashboard() {
 
                     return (
                       <tr key={product.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4">
+                        <td className="px-4 py-4">
                           <div>
                             <a
                               href={product.permalink}
@@ -390,29 +389,29 @@ export default function Dashboard() {
                             <p className="text-xs text-gray-500 mt-1">{product.id}</p>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
+                        <td className="px-3 py-4 text-sm text-gray-900">
                           {product.seller_custom_field || '-'}
                         </td>
-                        <td className="px-6 py-4 text-sm font-semibold text-gray-900">
+                        <td className="px-3 py-4 text-sm font-semibold text-gray-900 text-center">
                           {product.available_quantity}
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-4 text-center">
                           <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${stockStatus.color}`}>
                             {stockStatus.label}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-4 text-center">
                           <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${pubStatus.color}`}>
                             {pubStatus.label}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
+                        <td className="px-3 py-4 text-sm text-gray-900 text-center">
                           {getFulfillmentType(product.shipping)}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
+                        <td className="px-3 py-4 text-xs text-gray-900">
                           {formatDate(product.last_updated)}
                         </td>
-                        <td className="px-6 py-4 text-sm font-semibold text-green-600">
+                        <td className="px-3 py-4 text-sm font-semibold text-green-600 text-right">
                           {formatPrice(product.price)}
                         </td>
                       </tr>
