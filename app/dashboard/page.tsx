@@ -33,6 +33,9 @@ export default function Dashboard() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(50);
   const [loadingMore, setLoadingMore] = useState(false);
+  
+  // Estados para filtros
+  const [fulfillmentFilter, setFulfillmentFilter] = useState<string>('todos');
 
   useEffect(() => {
     fetchProducts(0, itemsPerPage);
@@ -40,7 +43,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     filterProducts();
-  }, [searchTerm, products]);
+  }, [searchTerm, products, fulfillmentFilter]);
 
   const fetchProducts = async (offset: number, limit: number) => {
     try {
@@ -69,17 +72,37 @@ export default function Dashboard() {
   };
 
   const filterProducts = () => {
-    if (!searchTerm.trim()) {
-      setFilteredProducts(products);
-      return;
+    let filtered = products;
+    
+    // Filtro por búsqueda de texto
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase();
+      filtered = filtered.filter(product => 
+        product.title.toLowerCase().includes(term) ||
+        product.id.toLowerCase().includes(term) ||
+        (product.seller_custom_field && product.seller_custom_field.toLowerCase().includes(term))
+      );
     }
-
-    const term = searchTerm.toLowerCase();
-    const filtered = products.filter(product => 
-      product.title.toLowerCase().includes(term) ||
-      product.id.toLowerCase().includes(term) ||
-      (product.seller_custom_field && product.seller_custom_field.toLowerCase().includes(term))
-    );
+    
+    // Filtro por tipo de fulfillment
+    if (fulfillmentFilter !== 'todos') {
+      filtered = filtered.filter(product => {
+        switch (fulfillmentFilter) {
+          case 'full':
+            return product.shipping.logistic_type === 'fulfillment';
+          case 'flex':
+            return product.shipping.logistic_type === 'xd_drop_off';
+          case 'me':
+            return product.shipping.mode === 'me2';
+          case 'normal':
+            return product.shipping.mode === 'not_specified' || 
+                   (!product.shipping.logistic_type && product.shipping.mode !== 'me2');
+          default:
+            return true;
+        }
+      });
+    }
+    
     setFilteredProducts(filtered);
   };
 
@@ -285,30 +308,53 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Segunda fila: Selector de cantidad y contador */}
+            {/* Segunda fila: Filtros y selector de cantidad */}
             <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between border-t pt-4">
-              <div className="flex items-center gap-3">
-                <label htmlFor="itemsPerPage" className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                  Productos por página:
-                </label>
-                <select
-                  id="itemsPerPage"
-                  value={itemsPerPage}
-                  onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-                >
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                  <option value={200}>200</option>
-                  <option value={500}>500</option>
-                </select>
+              <div className="flex flex-wrap items-center gap-4">
+                {/* Selector de productos por página */}
+                <div className="flex items-center gap-3">
+                  <label htmlFor="itemsPerPage" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    Productos por página:
+                  </label>
+                  <select
+                    id="itemsPerPage"
+                    value={itemsPerPage}
+                    onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                  >
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={200}>200</option>
+                    <option value={500}>500</option>
+                  </select>
+                </div>
+                
+                {/* Filtro de Fulfillment */}
+                <div className="flex items-center gap-3">
+                  <label htmlFor="fulfillmentFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    Fulfillment:
+                  </label>
+                  <select
+                    id="fulfillmentFilter"
+                    value={fulfillmentFilter}
+                    onChange={(e) => setFulfillmentFilter(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white min-w-[160px]"
+                  >
+                    <option value="todos">Todos</option>
+                    <option value="full">📦 Full</option>
+                    <option value="flex">⚡ Flex</option>
+                    <option value="me">🚚 Mercado Envíos</option>
+                    <option value="normal">📍 Normal/Sin envío</option>
+                  </select>
+                </div>
               </div>
+              
               <div className="text-sm text-gray-600">
                 <span className="font-semibold">Total: {total.toLocaleString()}</span> productos
-                {searchTerm && (
+                {(searchTerm || fulfillmentFilter !== 'todos') && (
                   <span> • Mostrando <span className="font-semibold">{filteredProducts.length}</span> resultados</span>
                 )}
-                {!searchTerm && (
+                {!searchTerm && fulfillmentFilter === 'todos' && (
                   <span> • Viendo del <span className="font-semibold">{startItem}</span> al <span className="font-semibold">{endItem}</span></span>
                 )}
               </div>
@@ -424,7 +470,7 @@ export default function Dashboard() {
         </div>
 
         {/* Paginación */}
-        {!searchTerm && totalPages > 1 && (
+        {!searchTerm && fulfillmentFilter === 'todos' && totalPages > 1 && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mt-6">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
               {/* Información de página */}
