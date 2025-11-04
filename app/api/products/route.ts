@@ -13,6 +13,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // 1. Obtener información del usuario
     const userResponse = await fetch('https://api.mercadolibre.com/users/me', {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -26,9 +27,10 @@ export async function GET(request: NextRequest) {
     const userData = await userResponse.json();
     const userId = userData.id;
 
+    // 2. Obtener IDs de todas las publicaciones del usuario
     const searchParams = request.nextUrl.searchParams;
     const offset = searchParams.get('offset') || '0';
-    const limit = searchParams.get('limit') || '50';
+    const limit = searchParams.get('limit') || '50'; // Máximo 50 por request
 
     const itemsResponse = await fetch(
       `https://api.mercadolibre.com/users/${userId}/items/search?status=active,paused,closed&offset=${offset}&limit=${limit}`,
@@ -47,6 +49,8 @@ export async function GET(request: NextRequest) {
     const itemIds = itemsData.results;
     const total = itemsData.paging.total;
 
+    // 3. Obtener detalles de cada publicación
+    // Usar multiget para obtener hasta 20 items por request
     const products = [];
     
     for (let i = 0; i < itemIds.length; i += 20) {
@@ -54,7 +58,7 @@ export async function GET(request: NextRequest) {
       const idsParam = batch.join(',');
       
       const detailsResponse = await fetch(
-        `https://api.mercadolibre.com/items?ids=${idsParam}&attributes=id,title,price,available_quantity,status,permalink,last_updated,shipping,seller_custom_field`,
+        `https://api.mercadolibre.com/items?ids=${idsParam}&attributes=id,title,price,available_quantity,status,permalink,last_updated,shipping,attributes`,
         {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -65,6 +69,7 @@ export async function GET(request: NextRequest) {
       if (detailsResponse.ok) {
         const details = await detailsResponse.json();
         
+        // Procesar cada item del batch
         for (const item of details) {
           if (item.code === 200 && item.body) {
             products.push(item.body);
