@@ -1,0 +1,365 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import * as XLSX from 'xlsx';
+
+interface Product {
+  id: string;
+  title: string;
+  seller_custom_field: string | null;
+  available_quantity: number;
+  status: string;
+  price: number;
+  last_updated: string;
+  permalink: string;
+  shipping: {
+    mode: string;
+    free_shipping: boolean;
+    logistic_type: string | null;
+  };
+}
+
+export default function Dashboard() {
+  const router = useRouter();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [total, setTotal] = useState(0);
+
+  useEffect(() => {
+    fetchProducts();
+  }, []);
+
+  useEffect(() => {
+    filterProducts();
+  }, [searchTerm, products]);
+
+  const fetchProducts = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch('/api/products');
+      
+      if (response.status === 401) {
+        router.push('/');
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Error cargando productos');
+      }
+
+      const data = await response.json();
+      setProducts(data.products);
+      setFilteredProducts(data.products);
+      setTotal(data.total);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filterProducts = () => {
+    if (!searchTerm.trim()) {
+      setFilteredProducts(products);
+      return;
+    }
+
+    const term = searchTerm.toLowerCase();
+    const filtered = products.filter(product => 
+      product.title.toLowerCase().includes(term) ||
+      product.id.toLowerCase().includes(term) ||
+      (product.seller_custom_field && product.seller_custom_field.toLowerCase().includes(term))
+    );
+    setFilteredProducts(filtered);
+  };
+
+  const getStockStatus = (quantity: number): { label: string; color: string } => {
+    if (quantity <= 5) {
+      return { label: 'Stock bajo', color: 'bg-yellow-100 text-yellow-800' };
+    }
+    return { label: 'Stock normal', color: 'bg-green-100 text-green-800' };
+  };
+
+  const getPublicationStatus = (status: string): { label: string; color: string } => {
+    switch (status) {
+      case 'active':
+        return { label: 'Activo', color: 'bg-green-100 text-green-800' };
+      case 'paused':
+        return { label: 'Pausado', color: 'bg-gray-100 text-gray-800' };
+      case 'closed':
+        return { label: 'Finalizado', color: 'bg-red-100 text-red-800' };
+      default:
+        return { label: status, color: 'bg-gray-100 text-gray-800' };
+    }
+  };
+
+  const getFulfillmentType = (shipping: Product['shipping']): string => {
+    if (shipping.logistic_type === 'fulfillment') {
+      return '📦 Full';
+    } else if (shipping.logistic_type === 'xd_drop_off') {
+      return '⚡ Flex';
+    } else if (shipping.mode === 'me2') {
+      return '🚚 Mercado Envíos';
+    } else if (shipping.mode === 'not_specified') {
+      return '📍 Sin envío';
+    }
+    return '📍 Normal';
+  };
+
+  const formatPrice = (price: number): string => {
+    return new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: 'ARS',
+      minimumFractionDigits: 0,
+    }).format(price);
+  };
+
+  const formatDate = (dateString: string): string => {
+    const date = new Date(dateString);
+    return date.toLocaleString('es-AR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  };
+
+  const exportToExcel = () => {
+    const dataToExport = filteredProducts.map(product => ({
+      'ID': product.id,
+      'Producto': product.title,
+      'SKU': product.seller_custom_field || '',
+      'Stock': product.available_quantity,
+      'Estado Stock': getStockStatus(product.available_quantity).label,
+      'Estado Publicación': getPublicationStatus(product.status).label,
+      'Fulfillment': getFulfillmentType(product.shipping),
+      'Última Actualización': formatDate(product.last_updated),
+      'Precio': product.price,
+      'Link': product.permalink,
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Productos');
+
+    const maxWidth = 50;
+    const colWidths = Object.keys(dataToExport[0] || {}).map(key => {
+      const maxLength = Math.max(
+        key.length,
+        ...dataToExport.map(row => String(row[key as keyof typeof row]).length)
+      );
+      return { wch: Math.min(maxLength + 2, maxWidth) };
+    });
+    ws['!cols'] = colWidths;
+
+    const fileName = `productos-mercadolibre-${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+  };
+
+  const handleLogout = async () => {
+    await fetch('/api/logout', { method: 'POST' });
+    router.push('/');
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Cargando productos...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg shadow-md p-8 max-w-md w-full">
+          <div className="text-red-600 text-center mb-4">
+            <svg className="w-12 h-12 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd"/>
+            </svg>
+            <h2 className="text-xl font-bold">Error</h2>
+          </div>
+          <p className="text-gray-600 text-center mb-4">{error}</p>
+          <button
+            onClick={handleLogout}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-200"
+          >
+            Volver al inicio
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white shadow-sm border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-yellow-400 rounded-lg flex items-center justify-center">
+                <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"/>
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-gray-800">Dashboard Mercado Libre</h1>
+                <p className="text-sm text-gray-500">Gestión de publicaciones</p>
+              </div>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="text-gray-600 hover:text-gray-800 font-medium text-sm flex items-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Cerrar sesión
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+          <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+            <div className="flex-1 w-full md:w-auto">
+              <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-2">
+                Buscar producto:
+              </label>
+              <input
+                id="search"
+                type="text"
+                placeholder="Buscar por nombre, SKU o ID..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div className="flex items-end">
+              <button
+                onClick={exportToExcel}
+                disabled={filteredProducts.length === 0}
+                className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 whitespace-nowrap"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Exportar a Excel ({filteredProducts.length})
+              </button>
+            </div>
+          </div>
+          <p className="text-sm text-gray-600 mt-4">
+            Mostrando {filteredProducts.length} de {total} productos
+          </p>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Producto
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    SKU
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Stock
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Estado Stock
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Estado Publicación
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Fulfillment
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Última actualización
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Precio
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {filteredProducts.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-6 py-12 text-center">
+                      <div className="text-gray-400">
+                        <svg className="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                        </svg>
+                        <p className="text-sm">No se encontraron productos</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredProducts.map((product) => {
+                    const stockStatus = getStockStatus(product.available_quantity);
+                    const pubStatus = getPublicationStatus(product.status);
+
+                    return (
+                      <tr key={product.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4">
+                          <div>
+                            <a
+                              href={product.permalink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 font-medium hover:underline"
+                            >
+                              {product.title}
+                            </a>
+                            <p className="text-xs text-gray-500 mt-1">{product.id}</p>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          {product.seller_custom_field || '-'}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-semibold text-gray-900">
+                          {product.available_quantity}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${stockStatus.color}`}>
+                            {stockStatus.label}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${pubStatus.color}`}>
+                            {pubStatus.label}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          {getFulfillmentType(product.shipping)}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          {formatDate(product.last_updated)}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-semibold text-green-600">
+                          {formatPrice(product.price)}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
