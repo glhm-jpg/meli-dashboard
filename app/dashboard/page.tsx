@@ -7,7 +7,11 @@ import * as XLSX from 'xlsx';
 interface Product {
   id: string;
   title: string;
-  seller_custom_field: string | null;
+  attributes: Array<{
+    id: string;
+    name: string;
+    value_name: string;
+  }>;
   available_quantity: number;
   status: string;
   price: number;
@@ -115,11 +119,14 @@ export default function Dashboard() {
     // Filtro por búsqueda de texto
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(product => 
-        product.title.toLowerCase().includes(term) ||
-        product.id.toLowerCase().includes(term) ||
-        (product.seller_custom_field && product.seller_custom_field.toLowerCase().includes(term))
-      );
+      filtered = filtered.filter(product => {
+        const sku = getSellerSKU(product);
+        return (
+          product.title.toLowerCase().includes(term) ||
+          product.id.toLowerCase().includes(term) ||
+          (sku !== '-' && sku.toLowerCase().includes(term))
+        );
+      });
     }
     
     // Filtro por tipo de fulfillment
@@ -157,6 +164,15 @@ export default function Dashboard() {
   const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
   const startItem = (currentPage - 1) * itemsPerPage + 1;
   const endItem = Math.min(currentPage * itemsPerPage, filteredProducts.length);
+
+  const getSellerSKU = (product: Product): string => {
+    if (!product.attributes || product.attributes.length === 0) {
+      return '-';
+    }
+    
+    const skuAttribute = product.attributes.find(attr => attr.id === 'SELLER_SKU');
+    return skuAttribute ? skuAttribute.value_name : '-';
+  };
 
   const getStockStatus = (quantity: number): { label: string; color: string } => {
     if (quantity <= 5) {
@@ -214,7 +230,7 @@ export default function Dashboard() {
     const dataToExport = filteredProducts.map(product => ({
       'ID': product.id,
       'Producto': product.title,
-      'SKU': product.seller_custom_field || '',
+      'SKU': getSellerSKU(product),
       'Stock': product.available_quantity,
       'Estado Stock': getStockStatus(product.available_quantity).label,
       'Estado Publicación': getPublicationStatus(product.status).label,
@@ -478,7 +494,7 @@ export default function Dashboard() {
                           </div>
                         </td>
                         <td className="px-3 py-4 text-sm text-gray-900">
-                          {product.seller_custom_field || '-'}
+                          {getSellerSKU(product)}
                         </td>
                         <td className="px-3 py-4 text-sm font-semibold text-gray-900 text-center">
                           {product.available_quantity}
