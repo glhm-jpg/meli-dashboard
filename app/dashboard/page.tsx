@@ -268,7 +268,7 @@ export default function Dashboard() {
         'ID': product.id,
         'Producto': product.title,
         'SKU': sku,
-        'Ventas 60d': getSalesBySKU(sku),
+        'Unidades 60d': getSalesBySKU(sku),
         'Stock': product.available_quantity,
         'Estado Stock': getStockStatus(product.available_quantity).label,
         'Estado Publicación': getPublicationStatus(product.status).label,
@@ -503,8 +503,8 @@ export default function Dashboard() {
                   <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
                     SKU
                   </th>
-                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
-                    Ventas 60d
+                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
+                    Unidades 60d
                   </th>
                   <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-16">
                     Stock
@@ -569,8 +569,8 @@ export default function Dashboard() {
                               <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
                             </div>
                           ) : (
-                            <span className="text-sm font-semibold text-blue-600">
-                              {sales60d > 0 ? `📊 ${sales60d}` : '-'}
+                            <span className="text-sm font-bold text-blue-600">
+                              {sales60d > 0 ? sales60d : '-'}
                             </span>
                           )}
                         </td>
