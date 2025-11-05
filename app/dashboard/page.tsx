@@ -33,6 +33,8 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [total, setTotal] = useState(0);
+  const [salesBySKU, setSalesBySKU] = useState<{ [sku: string]: number }>({});
+  const [loadingSales, setLoadingSales] = useState(false);
   
   // Estados para paginación
   const [currentPage, setCurrentPage] = useState(1);
@@ -45,6 +47,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchProducts();
+    fetchSales();
   }, []);
 
   useEffect(() => {
@@ -114,6 +117,23 @@ export default function Dashboard() {
     }
   };
 
+  const fetchSales = async () => {
+    try {
+      setLoadingSales(true);
+      const response = await fetch('/api/sales');
+      
+      if (response.ok) {
+        const data = await response.json();
+        setSalesBySKU(data.salesBySKU || {});
+      }
+    } catch (err) {
+      console.error('Error cargando ventas:', err);
+      // No mostramos error al usuario, solo en consola
+    } finally {
+      setLoadingSales(false);
+    }
+  };
+
   const filterProducts = () => {
     let filtered = products;
     
@@ -180,6 +200,11 @@ export default function Dashboard() {
     return skuAttribute ? skuAttribute.value_name : '-';
   };
 
+  const getSalesBySKU = (sku: string): number => {
+    if (sku === '-') return 0;
+    return salesBySKU[sku] || 0;
+  };
+
   const getStockStatus = (quantity: number): { label: string; color: string } => {
     if (quantity <= 5) {
       return { label: 'Stock bajo', color: 'bg-yellow-100 text-yellow-800' };
@@ -237,18 +262,22 @@ export default function Dashboard() {
   };
 
   const exportToExcel = () => {
-    const dataToExport = filteredProducts.map(product => ({
-      'ID': product.id,
-      'Producto': product.title,
-      'SKU': getSellerSKU(product),
-      'Stock': product.available_quantity,
-      'Estado Stock': getStockStatus(product.available_quantity).label,
-      'Estado Publicación': getPublicationStatus(product.status).label,
-      'Fulfillment': getFulfillmentType(product.shipping),
-      'Última Actualización': formatDate(product.last_updated),
-      'Precio': product.price,
-      'Link': product.permalink,
-    }));
+    const dataToExport = filteredProducts.map(product => {
+      const sku = getSellerSKU(product);
+      return {
+        'ID': product.id,
+        'Producto': product.title,
+        'SKU': sku,
+        'Ventas 60d': getSalesBySKU(sku),
+        'Stock': product.available_quantity,
+        'Estado Stock': getStockStatus(product.available_quantity).label,
+        'Estado Publicación': getPublicationStatus(product.status).label,
+        'Fulfillment': getFulfillmentType(product.shipping),
+        'Última Actualización': formatDate(product.last_updated),
+        'Precio': product.price,
+        'Link': product.permalink,
+      };
+    });
 
     const ws = XLSX.utils.json_to_sheet(dataToExport);
     const wb = XLSX.utils.book_new();
@@ -474,6 +503,9 @@ export default function Dashboard() {
                   <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
                     SKU
                   </th>
+                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
+                    Ventas 60d
+                  </th>
                   <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-16">
                     Stock
                   </th>
@@ -497,7 +529,7 @@ export default function Dashboard() {
               <tbody className="bg-white divide-y divide-gray-200">
                 {paginatedProducts.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-6 py-12 text-center">
+                    <td colSpan={9} className="px-6 py-12 text-center">
                       <div className="text-gray-400">
                         <svg className="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
@@ -510,6 +542,8 @@ export default function Dashboard() {
                   paginatedProducts.map((product) => {
                     const stockStatus = getStockStatus(product.available_quantity);
                     const pubStatus = getPublicationStatus(product.status);
+                    const sku = getSellerSKU(product);
+                    const sales60d = getSalesBySKU(sku);
 
                     return (
                       <tr key={product.id} className="hover:bg-gray-50">
@@ -527,7 +561,18 @@ export default function Dashboard() {
                           </div>
                         </td>
                         <td className="px-3 py-4 text-sm text-gray-900">
-                          {getSellerSKU(product)}
+                          {sku}
+                        </td>
+                        <td className="px-3 py-4 text-center">
+                          {loadingSales ? (
+                            <div className="flex justify-center">
+                              <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+                            </div>
+                          ) : (
+                            <span className="text-sm font-semibold text-blue-600">
+                              {sales60d > 0 ? `📊 ${sales60d}` : '-'}
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-4 text-sm font-semibold text-gray-900 text-center">
                           {product.available_quantity}
