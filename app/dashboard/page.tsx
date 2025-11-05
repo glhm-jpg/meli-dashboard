@@ -90,7 +90,8 @@ export default function Dashboard() {
       const batchSize = 50;
       
       // Calcular cuántos batches necesitamos
-      const totalBatches = Math.ceil(totalProducts / batchSize);
+      const maxProducts = Math.min(totalProducts, 2000);
+const totalBatches = Math.ceil(maxProducts / batchSize);
       
       // Cargar el resto de los batches
       for (let i = 1; i < totalBatches; i++) {
