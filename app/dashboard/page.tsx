@@ -182,7 +182,7 @@ export default function Dashboard() {
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(product => {
-        const sku = product.attributes?.find(attr => attr.id === 'SELLER_SKU')?.value_name || '';
+        const sku = product.attributes?.find(attr => attr.id === 'seller_sku')?.value_name || '';
         return (
           product.title.toLowerCase().includes(term) ||
           product.id.toLowerCase().includes(term) ||
@@ -244,7 +244,7 @@ export default function Dashboard() {
 
   const exportToExcel = () => {
     const dataToExport = filteredProducts.map(product => {
-      const sku = product.attributes?.find(attr => attr.id === 'SELLER_SKU')?.value_name || 'N/A';
+      const sku = product.attributes?.find(attr => attr.id === 'seller_sku')?.value_name || 'N/A';
       const sales60d = salesBySKU[sku] || 0;
       
       return {
@@ -397,20 +397,27 @@ export default function Dashboard() {
                   <th className="px-4 py-3 text-right">Precio</th>
                   <th className="px-4 py-3 text-center">Stock</th>
                   <th className="px-4 py-3 text-center">Ventas 60d</th>
-                  <th className="px-4 py-3 text-center">Fulfillment</th>
+                  <th className="px-4 py-3 text-center">Envíos</th>
                   <th className="px-4 py-3 text-center">Estado</th>
                   <th className="px-4 py-3 text-center">Ver</th>
                 </tr>
               </thead>
               <tbody>
                 {paginatedProducts.map((product, index) => {
-                  const sku = product.attributes?.find(attr => attr.id === 'SELLER_SKU')?.value_name || 'N/A';
+                  const sku = product.attributes?.find(attr => attr.id === 'seller_sku')?.value_name || 'N/A';
                   const sales60d = salesBySKU[sku] || 0;
                   
                   return (
                     <tr key={product.id} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
                       <td className="px-4 py-3">
-                        <div className="font-medium text-gray-800">{product.title}</div>
+                        <a 
+                          href={product.permalink} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          {product.title}
+                        </a>
                         <div className="text-xs text-gray-500">{product.id}</div>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600">{sku}</td>
