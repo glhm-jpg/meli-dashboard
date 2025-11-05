@@ -42,7 +42,11 @@ export async function GET(request: NextRequest) {
   const cookieStore = cookies();
   const accessToken = cookieStore.get('meli_access_token')?.value;
 
+  console.log('📋 [PRODUCTS API] Petición recibida');
+  console.log('📋 [PRODUCTS API] Token encontrado:', accessToken ? 'SÍ' : 'NO');
+
   if (!accessToken) {
+    console.error('❌ [PRODUCTS API] No autenticado - Token no encontrado');
     return NextResponse.json(
       { error: 'No autenticado' },
       { status: 401 }
@@ -51,6 +55,7 @@ export async function GET(request: NextRequest) {
 
   try {
     // 1. Obtener información del usuario
+    console.log('📋 [PRODUCTS API] Obteniendo información del usuario...');
     const userResponse = await fetchWithRetry(
       'https://api.mercadolibre.com/users/me',
       {
@@ -61,18 +66,23 @@ export async function GET(request: NextRequest) {
     );
 
     if (!userResponse.ok) {
+      console.error('❌ [PRODUCTS API] Error obteniendo usuario:', userResponse.status);
+      if (userResponse.status === 401) {
+        return NextResponse.json({ error: 'Token inválido o expirado' }, { status: 401 });
+      }
       throw new Error('Error obteniendo usuario');
     }
 
     const userData = await userResponse.json();
     const userId = userData.id;
+    console.log('✅ [PRODUCTS API] Usuario obtenido:', userId);
 
     // 2. Obtener IDs de todas las publicaciones del usuario
     const searchParams = request.nextUrl.searchParams;
     const offset = searchParams.get('offset') || '0';
     const limit = searchParams.get('limit') || '50'; // Máximo 50 por request
 
-    console.log(`Obteniendo productos - offset: ${offset}, limit: ${limit}`);
+    console.log(`📋 [PRODUCTS API] Obteniendo productos - offset: ${offset}, limit: ${limit}`);
 
     // Incluir TODOS los estados posibles
     const itemsResponse = await fetchWithRetry(
@@ -85,6 +95,7 @@ export async function GET(request: NextRequest) {
     );
 
     if (!itemsResponse.ok) {
+      console.error('❌ [PRODUCTS API] Error obteniendo publicaciones:', itemsResponse.status);
       throw new Error('Error obteniendo publicaciones');
     }
 
@@ -92,7 +103,8 @@ export async function GET(request: NextRequest) {
     const itemIds = itemsData.results;
     const total = itemsData.paging.total;
 
-    console.log(`Encontrados ${itemIds.length} IDs de productos para este batch`);
+    console.log(`✅ [PRODUCTS API] Encontrados ${itemIds.length} IDs de productos para este batch`);
+    console.log(`📊 [PRODUCTS API] Total productos en cuenta: ${total}`);
 
     // 3. Obtener detalles de cada publicación
     // Usar multiget para obtener hasta 20 items por request
@@ -107,10 +119,10 @@ export async function GET(request: NextRequest) {
         await delay(500); // 500ms entre cada batch
       }
       
-      console.log(`Obteniendo detalles del batch ${Math.floor(i/20) + 1}/${Math.ceil(itemIds.length/20)}`);
+      console.log(`📋 [PRODUCTS API] Obteniendo detalles del batch ${Math.floor(i/20) + 1}/${Math.ceil(itemIds.length/20)}`);
       
       const detailsResponse = await fetchWithRetry(
-        `https://api.mercadolibre.com/items?ids=${idsParam}&attributes=id,title,price,available_quantity,status,permalink,last_updated,shipping,attributes`,
+        `https://api.mercadolibre.com/items?ids=${idsParam}&attributes=id,title,price,available_quantity,sold_quantity,status,permalink,thumbnail,pictures,shipping,attributes`,
         {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -126,27 +138,57 @@ export async function GET(request: NextRequest) {
         // Procesar cada item del batch
         for (const item of details) {
           if (item.code === 200 && item.body) {
-            products.push(item.body);
+            const productData = item.body;
+            
+            // Extraer SKU de los atributos
+            const skuAttribute = productData.attributes?.find((attr: any) => attr.id === 'SELLER_SKU');
+            const sku = skuAttribute?.value_name || null;
+            
+            // Extraer fulfillment
+            const fulfillment = productData.shipping?.logistic_type || null;
+            
+            products.push({
+              id: productData.id,
+              title: productData.title,
+              price: productData.price,
+              available_quantity: productData.available_quantity,
+              sold_quantity: productData.sold_quantity || 0,
+              status: productData.status,
+              permalink: productData.permalink,
+              thumbnail: productData.thumbnail || productData.pictures?.[0]?.url || '',
+              fulfillment: fulfillment,
+              sku: sku
+            });
           } else if (item.code !== 200) {
-            console.warn(`Item ${item.body?.id || 'unknown'} retornó código ${item.code}`);
+            console.warn(`⚠️ [PRODUCTS API] Item ${item.body?.id || 'unknown'} retornó código ${item.code}`);
           }
         }
       } else {
-        console.error(`Error obteniendo detalles del batch: ${detailsResponse.status}`);
+        console.error(`❌ [PRODUCTS API] Error obteniendo detalles del batch: ${detailsResponse.status}`);
       }
     }
 
-    console.log(`Total de productos procesados: ${products.length} de ${itemIds.length} IDs`);
+    console.log(`✅ [PRODUCTS API] Total de productos procesados: ${products.length} de ${itemIds.length} IDs`);
 
+    // 🔥 FORMATO COMPATIBLE CON DASHBOARD VIEJO Y NUEVO
     return NextResponse.json({
-      products,
-      total,
+      // Formato NUEVO (para dashboard nuevo)
+      products: products,
+      total: total,
       offset: parseInt(offset),
       limit: parseInt(limit),
+      
+      // Formato VIEJO (para dashboard viejo) - COMPATIBILIDAD
+      results: products,
+      paging: {
+        total: total,
+        offset: parseInt(offset),
+        limit: parseInt(limit)
+      }
     });
 
   } catch (error) {
-    console.error('Error obteniendo productos:', error);
+    console.error('❌ [PRODUCTS API] Error obteniendo productos:', error);
     return NextResponse.json(
       { error: 'Error obteniendo productos' },
       { status: 500 }
