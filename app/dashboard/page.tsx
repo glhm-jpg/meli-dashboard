@@ -36,7 +36,6 @@ export default function Dashboard() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingMessage, setLoadingMessage] = useState('Iniciando carga...');
-  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchAllProducts();
@@ -53,86 +52,42 @@ export default function Dashboard() {
   const fetchAllProducts = async () => {
     try {
       setLoading(true);
-      setLoadError(null);
-      setLoadingMessage('🔐 Validando autenticación...');
+      setLoadingMessage('Obteniendo información inicial...');
       setLoadingProgress(0);
 
-      console.log('📋 [DASHBOARD] Iniciando carga de productos...');
-
-      // Primera petición para obtener el total y validar autenticación
-      console.log('📋 [DASHBOARD] Realizando primera petición...');
+      // Primera petición para obtener el total
       const firstResponse = await fetch('/api/products?offset=0&limit=50');
       
-      console.log('📋 [DASHBOARD] Status de primera respuesta:', firstResponse.status);
-
-      // Si no está autenticado, redirigir
       if (firstResponse.status === 401) {
-        console.error('❌ [DASHBOARD] No autenticado (401) - Redirigiendo al login...');
-        setLoadError('Sesión expirada. Redirigiendo al login...');
-        setTimeout(() => router.push('/'), 2000);
+        router.push('/');
         return;
       }
 
       if (!firstResponse.ok) {
-        const errorText = await firstResponse.text();
-        console.error('❌ [DASHBOARD] Error en primera petición:', firstResponse.status, errorText);
-        throw new Error(`Error ${firstResponse.status}: ${errorText}`);
+        throw new Error('Error al cargar productos');
       }
 
       const firstData = await firstResponse.json();
-      console.log('✅ [DASHBOARD] Primera respuesta recibida:', {
-        totalProductos: firstData.total,
-        productosCargados: firstData.products?.length || 0
-      });
-
-      const totalProducts = firstData.total;
+      const totalProducts = firstData.paging.total;
       
-      if (!totalProducts || totalProducts === 0) {
-        setLoadError('No se encontraron productos en tu cuenta.');
-        setLoading(false);
-        return;
-      }
-
-      // 🔥 CARGAR TODOS LOS PRODUCTOS (sin límite)
+      // LÍMITE MÁXIMO: 2000 productos para evitar sobrecarga
+      const maxProducts = Math.min(totalProducts, 2000);
       const batchSize = 50;
-      const totalBatches = Math.ceil(totalProducts / batchSize);
-      
-      // Tiempo estimado: 1 segundo por batch
-      const estimatedMinutes = Math.ceil(totalBatches / 60);
-      
-      setLoadingMessage(`📦 Cargando ${totalProducts.toLocaleString()} productos en ${totalBatches} lotes (≈${estimatedMinutes} min)`);
-      
-      // Extraer productos del primer batch
-      let allProducts: Product[] = [];
-      if (firstData.products && Array.isArray(firstData.products)) {
-        allProducts = firstData.products.map((p: any) => ({
-          id: p.id,
-          title: p.title,
-          price: p.price,
-          available_quantity: p.available_quantity,
-          sold_quantity: p.sold_quantity || 0,
-          permalink: p.permalink,
-          thumbnail: p.thumbnail || p.pictures?.[0]?.url || '',
-          status: p.status,
-          fulfillment: p.shipping?.logistic_type,
-          sku: p.attributes?.find((attr: any) => attr.id === 'SELLER_SKU')?.value_name
-        }));
-      }
+      const totalBatches = Math.ceil(maxProducts / batchSize);
 
+      setLoadingMessage(`Cargando ${maxProducts} productos en ${totalBatches} lotes...`);
+      
+      let allProducts: Product[] = [...firstData.results];
       setLoadingProgress(Math.round((1 / totalBatches) * 100));
-      console.log('✅ [DASHBOARD] Primer lote cargado:', allProducts.length, 'productos');
 
-      // 🔥 Cargar el resto con DELAYS progresivos
+      // 🔥 SOLUCIÓN: Cargar el resto con DELAYS de 1 segundo
       for (let i = 1; i < totalBatches; i++) {
         const offset = i * batchSize;
         
         // ✅ DELAY DE 1 SEGUNDO entre peticiones
         await new Promise(resolve => setTimeout(resolve, 1000));
         
-        const percentComplete = Math.round(((i + 1) / totalBatches) * 100);
-        const productsLoaded = Math.min((i + 1) * batchSize, totalProducts);
-        
-        setLoadingMessage(`⏳ Lote ${i + 1}/${totalBatches} - ${productsLoaded.toLocaleString()}/${totalProducts.toLocaleString()} productos (${percentComplete}%)`);
+        setLoadingMessage(`Cargando lote ${i + 1} de ${totalBatches}...`);
         
         // ✅ RETRY LOGIC: 3 intentos si falla
         let attempts = 0;
@@ -140,92 +95,41 @@ export default function Dashboard() {
         
         while (attempts < 3 && !success) {
           try {
-            console.log(`📋 [DASHBOARD] Cargando lote ${i + 1}/${totalBatches} (offset: ${offset})`);
-            
             const response = await fetch(`/api/products?offset=${offset}&limit=${batchSize}`);
-            
-            // Verificar si la sesión expiró a mitad de la carga
-            if (response.status === 401) {
-              console.error('❌ [DASHBOARD] Sesión expiró durante la carga');
-              setLoadError('Sesión expirada durante la carga. Redirigiendo...');
-              setTimeout(() => router.push('/'), 2000);
-              return;
-            }
             
             if (!response.ok) {
               throw new Error(`Error ${response.status}`);
             }
             
             const data = await response.json();
-            
-            // Validar que los datos sean correctos
-            if (!data.products || !Array.isArray(data.products)) {
-              throw new Error('Respuesta inválida de la API');
-            }
-            
-            // Procesar productos del batch
-            const batchProducts = data.products.map((p: any) => ({
-              id: p.id,
-              title: p.title,
-              price: p.price,
-              available_quantity: p.available_quantity,
-              sold_quantity: p.sold_quantity || 0,
-              permalink: p.permalink,
-              thumbnail: p.thumbnail || p.pictures?.[0]?.url || '',
-              status: p.status,
-              fulfillment: p.shipping?.logistic_type,
-              sku: p.attributes?.find((attr: any) => attr.id === 'SELLER_SKU')?.value_name
-            }));
-            
-            allProducts = [...allProducts, ...batchProducts];
+            allProducts = [...allProducts, ...data.results];
             success = true;
-            
-            // Log cada 20 lotes
-            if (i % 20 === 0) {
-              console.log(`✅ [DASHBOARD] Lote ${i}/${totalBatches} - Total acumulado: ${allProducts.length}`);
-            }
             
           } catch (error) {
             attempts++;
-            console.error(`❌ [DASHBOARD] Error en lote ${i + 1}, intento ${attempts}/3:`, error);
-            
             if (attempts < 3) {
-              setLoadingMessage(`⚠️ Reintentando lote ${i + 1}... (intento ${attempts + 1}/3)`);
+              setLoadingMessage(`Reintentando lote ${i + 1}... (intento ${attempts + 1}/3)`);
               await new Promise(resolve => setTimeout(resolve, 2000)); // 2 seg si falla
             } else {
-              console.error(`❌ [DASHBOARD] Lote ${i + 1} falló después de 3 intentos`);
-              setLoadError(`Error cargando lote ${i + 1}. Se cargaron ${allProducts.length} productos de ${totalProducts}.`);
-              // Continuar con los productos cargados hasta ahora
-              success = true; // Para salir del while
+              console.error(`Error cargando lote ${i + 1} después de 3 intentos:`, error);
             }
           }
         }
         
-        setLoadingProgress(percentComplete);
+        const progress = Math.round(((i + 1) / totalBatches) * 100);
+        setLoadingProgress(progress);
       }
 
-      setLoadingMessage('✅ Procesando datos finales...');
-      
-      console.log(`🎉 [DASHBOARD] CARGA COMPLETA: ${allProducts.length} de ${totalProducts} productos`);
-      
+      setLoadingMessage('Procesando datos...');
       setProducts(allProducts);
       calculateStats(allProducts);
       
-      // Verificar SKUs únicos
-      const uniqueSKUs = new Set(allProducts.map(p => p.sku).filter(Boolean));
-      console.log(`📦 [DASHBOARD] SKUs únicos encontrados: ${uniqueSKUs.size}`);
-      
       setLoadingMessage('¡Carga completa!');
+      console.log(`✅ Total de productos cargados: ${allProducts.length}`);
       
     } catch (error) {
-      console.error('❌ [DASHBOARD] Error fatal:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Error desconocido al cargar productos';
-      setLoadError(errorMessage);
-      
-      // Si es un error de autenticación, redirigir
-      if (errorMessage.includes('401') || errorMessage.includes('autenticado')) {
-        setTimeout(() => router.push('/'), 2000);
-      }
+      console.error('Error:', error);
+      alert('Error al cargar los productos. Por favor, intenta nuevamente.');
     } finally {
       setLoading(false);
     }
@@ -278,7 +182,7 @@ export default function Dashboard() {
   };
 
   const handleLogout = () => {
-    document.cookie = 'meli_access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+    document.cookie = 'ml_access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;';
     router.push('/');
   };
 
@@ -351,7 +255,7 @@ export default function Dashboard() {
               <div className="inline-block animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-yellow-500"></div>
             </div>
             <h2 className="text-2xl font-bold text-gray-800 mb-2">Cargando Productos</h2>
-            <p className="text-gray-600 mb-4 text-sm">{loadingMessage}</p>
+            <p className="text-gray-600 mb-4">{loadingMessage}</p>
             
             {/* Barra de progreso */}
             <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden mb-2">
@@ -360,25 +264,11 @@ export default function Dashboard() {
                 style={{ width: `${loadingProgress}%` }}
               ></div>
             </div>
-            <p className="text-sm text-gray-500 font-bold">{loadingProgress}% completado</p>
+            <p className="text-sm text-gray-500">{loadingProgress}% completado</p>
             
-            {loadError && (
-              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-xs text-red-600">⚠️ {loadError}</p>
-              </div>
-            )}
-            
-            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-              <p className="text-xs text-gray-600 mb-2">
-                💡 <strong>Carga progresiva:</strong> Puede tomar varios minutos
-              </p>
-              <p className="text-xs text-gray-600 mb-2">
-                ⏱️ 1 segundo de delay entre cada 50 productos
-              </p>
-              <p className="text-xs text-gray-500">
-                🔍 Abre la consola (F12) para ver logs detallados
-              </p>
-            </div>
+            <p className="text-xs text-gray-400 mt-4">
+              ⏱️ Esto puede tomar 30-60 segundos...
+            </p>
           </div>
         </div>
       </div>
@@ -405,15 +295,15 @@ export default function Dashboard() {
             <div className="grid grid-cols-4 gap-4 mb-6">
               <div className="bg-blue-50 p-4 rounded-xl">
                 <p className="text-sm text-gray-600">Total Productos</p>
-                <p className="text-2xl font-bold text-blue-600">{stats.totalProducts.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-blue-600">{stats.totalProducts}</p>
               </div>
               <div className="bg-green-50 p-4 rounded-xl">
                 <p className="text-sm text-gray-600">Stock Total</p>
-                <p className="text-2xl font-bold text-green-600">{stats.totalStock.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-green-600">{stats.totalStock}</p>
               </div>
               <div className="bg-purple-50 p-4 rounded-xl">
                 <p className="text-sm text-gray-600">Ventas Totales</p>
-                <p className="text-2xl font-bold text-purple-600">{stats.totalSold.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-purple-600">{stats.totalSold}</p>
               </div>
               <div className="bg-yellow-50 p-4 rounded-xl">
                 <p className="text-sm text-gray-600">Precio Promedio</p>
