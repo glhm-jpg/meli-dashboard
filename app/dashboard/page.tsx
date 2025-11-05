@@ -2,744 +2,508 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import * as XLSX from 'xlsx';
 
 interface Product {
   id: string;
   title: string;
-  attributes: Array<{
-    id: string;
-    name: string;
-    value_name: string;
-  }>;
-  available_quantity: number;
-  status: string;
   price: number;
-  last_updated: string;
+  available_quantity: number;
+  sold_quantity: number;
   permalink: string;
-  shipping: {
-    mode: string;
-    free_shipping: boolean;
-    logistic_type: string | null;
-  };
+  thumbnail: string;
+  status: string;
+  fulfillment?: string;
+  sku?: string;
+}
+
+interface Stats {
+  totalProducts: number;
+  totalStock: number;
+  totalSold: number;
+  averagePrice: number;
 }
 
 export default function Dashboard() {
   const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
-  const [paginatedProducts, setPaginatedProducts] = useState<Product[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [total, setTotal] = useState(0);
-  const [salesBySKU, setSalesBySKU] = useState<{ [sku: string]: number }>({});
-  const [loadingSales, setLoadingSales] = useState(false);
-  
-  // Estados para paginación
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(50);
-  const [loadingMore, setLoadingMore] = useState(false);
-  
-  // Estados para filtros
-  const [fulfillmentFilter, setFulfillmentFilter] = useState<string>('todos');
-  const [statusFilter, setStatusFilter] = useState<string>('todos');
+  const [fulfillmentFilter, setFulfillmentFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingMessage, setLoadingMessage] = useState('Iniciando carga...');
 
   useEffect(() => {
-    fetchProducts();
-    fetchSales();
+    fetchAllProducts();
   }, []);
 
   useEffect(() => {
     filterProducts();
-  }, [searchTerm, products, fulfillmentFilter, statusFilter]);
-  
+  }, [products, searchTerm, fulfillmentFilter, statusFilter]);
+
   useEffect(() => {
-    paginateProducts();
-  }, [filteredProducts, currentPage, itemsPerPage]);
+    setCurrentPage(1);
+  }, [searchTerm, fulfillmentFilter, statusFilter, itemsPerPage]);
 
-  const paginateProducts = () => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    const paginated = filteredProducts.slice(startIndex, endIndex);
-    setPaginatedProducts(paginated);
-  };
-
-  const fetchProducts = async () => {
+  const fetchAllProducts = async () => {
     try {
       setLoading(true);
+      setLoadingMessage('Obteniendo información inicial...');
+      setLoadingProgress(0);
+
+      // Primera petición para obtener el total
+      const firstResponse = await fetch('/api/products?offset=0&limit=50');
       
-      // Primero obtenemos el total para saber cuántos productos hay
-      const initialResponse = await fetch('/api/products?offset=0&limit=50');
-      
-      if (initialResponse.status === 401) {
+      if (firstResponse.status === 401) {
         router.push('/');
         return;
       }
 
-      if (!initialResponse.ok) {
-        throw new Error('Error cargando productos');
+      if (!firstResponse.ok) {
+        throw new Error('Error al cargar productos');
       }
 
-      const initialData = await initialResponse.json();
-      const totalProducts = initialData.total;
-      setTotal(totalProducts);
+      const firstData = await firstResponse.json();
+      const totalProducts = firstData.paging.total;
       
-      // Cargar todos los productos en batches de 50
-      const allProducts: Product[] = [...initialData.products];
+      // LÍMITE MÁXIMO: 2000 productos para evitar sobrecarga
+      const maxProducts = Math.min(totalProducts, 2000);
       const batchSize = 50;
+      const totalBatches = Math.ceil(maxProducts / batchSize);
+
+      setLoadingMessage(`Cargando ${maxProducts} productos en ${totalBatches} lotes...`);
       
-      // Calcular cuántos batches necesitamos
-      const totalBatches = Math.ceil(totalProducts / batchSize);
-      
-      // Cargar el resto de los batches
+      let allProducts: Product[] = [...firstData.results];
+      setLoadingProgress(Math.round((1 / totalBatches) * 100));
+
+      // 🔥 SOLUCIÓN: Cargar el resto con DELAYS de 1 segundo
       for (let i = 1; i < totalBatches; i++) {
         const offset = i * batchSize;
-        const response = await fetch(`/api/products?offset=${offset}&limit=${batchSize}`);
         
-        if (response.ok) {
-          const data = await response.json();
-          allProducts.push(...data.products);
-          
-          // Actualizar progreso
-          setLoadingMore(true);
+        // ✅ DELAY DE 1 SEGUNDO entre peticiones
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        setLoadingMessage(`Cargando lote ${i + 1} de ${totalBatches}...`);
+        
+        // ✅ RETRY LOGIC: 3 intentos si falla
+        let attempts = 0;
+        let success = false;
+        
+        while (attempts < 3 && !success) {
+          try {
+            const response = await fetch(`/api/products?offset=${offset}&limit=${batchSize}`);
+            
+            if (!response.ok) {
+              throw new Error(`Error ${response.status}`);
+            }
+            
+            const data = await response.json();
+            allProducts = [...allProducts, ...data.results];
+            success = true;
+            
+          } catch (error) {
+            attempts++;
+            if (attempts < 3) {
+              setLoadingMessage(`Reintentando lote ${i + 1}... (intento ${attempts + 1}/3)`);
+              await new Promise(resolve => setTimeout(resolve, 2000)); // 2 seg si falla
+            } else {
+              console.error(`Error cargando lote ${i + 1} después de 3 intentos:`, error);
+            }
+          }
         }
+        
+        const progress = Math.round(((i + 1) / totalBatches) * 100);
+        setLoadingProgress(progress);
       }
-      
+
+      setLoadingMessage('Procesando datos...');
       setProducts(allProducts);
-      setFilteredProducts(allProducts);
+      calculateStats(allProducts);
       
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error desconocido');
+      setLoadingMessage('¡Carga completa!');
+      console.log(`✅ Total de productos cargados: ${allProducts.length}`);
+      
+    } catch (error) {
+      console.error('Error:', error);
+      alert('Error al cargar los productos. Por favor, intenta nuevamente.');
     } finally {
       setLoading(false);
-      setLoadingMore(false);
-    }
-  };
-
-  const fetchSales = async () => {
-    try {
-      setLoadingSales(true);
-      const response = await fetch('/api/sales');
-      
-      if (response.ok) {
-        const data = await response.json();
-        setSalesBySKU(data.salesBySKU || {});
-      }
-    } catch (err) {
-      console.error('Error cargando ventas:', err);
-      // No mostramos error al usuario, solo en consola
-    } finally {
-      setLoadingSales(false);
     }
   };
 
   const filterProducts = () => {
-    let filtered = products;
-    
-    // Filtro por búsqueda de texto
-    if (searchTerm.trim()) {
+    let filtered = [...products];
+
+    // Filtro de búsqueda
+    if (searchTerm) {
       const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(product => {
-        const sku = getSellerSKU(product);
-        return (
-          product.title.toLowerCase().includes(term) ||
-          product.id.toLowerCase().includes(term) ||
-          (sku !== '-' && sku.toLowerCase().includes(term))
-        );
-      });
+      filtered = filtered.filter(product => 
+        product.title.toLowerCase().includes(term) ||
+        product.id.includes(term) ||
+        (product.sku && product.sku.toLowerCase().includes(term))
+      );
     }
-    
-    // Filtro por tipo de fulfillment
-    if (fulfillmentFilter !== 'todos') {
+
+    // Filtro de fulfillment
+    if (fulfillmentFilter !== 'all') {
       filtered = filtered.filter(product => {
-        switch (fulfillmentFilter) {
-          case 'full':
-            return product.shipping.logistic_type === 'fulfillment';
-          case 'flex':
-            return product.shipping.logistic_type === 'xd_drop_off';
-          case 'me':
-            return product.shipping.mode === 'me2';
-          case 'normal':
-            return product.shipping.mode === 'not_specified' || 
-                   (!product.shipping.logistic_type && product.shipping.mode !== 'me2');
-          default:
-            return true;
+        if (fulfillmentFilter === 'none') {
+          return !product.fulfillment;
         }
+        return product.fulfillment === fulfillmentFilter;
       });
     }
-    
-    // Filtro por estado de publicación
-    if (statusFilter !== 'todos') {
+
+    // Filtro de estado
+    if (statusFilter !== 'all') {
       filtered = filtered.filter(product => product.status === statusFilter);
     }
-    
+
     setFilteredProducts(filtered);
   };
 
-  const handlePageChange = (newPage: number) => {
-    setCurrentPage(newPage);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  const calculateStats = (productList: Product[]) => {
+    const totalStock = productList.reduce((sum, p) => sum + p.available_quantity, 0);
+    const totalSold = productList.reduce((sum, p) => sum + p.sold_quantity, 0);
+    const averagePrice = productList.length > 0
+      ? productList.reduce((sum, p) => sum + p.price, 0) / productList.length
+      : 0;
 
-  const handleItemsPerPageChange = (newLimit: number) => {
-    setItemsPerPage(newLimit);
-    setCurrentPage(1);
-  };
-
-  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
-  const startItem = (currentPage - 1) * itemsPerPage + 1;
-  const endItem = Math.min(currentPage * itemsPerPage, filteredProducts.length);
-
-  const getSellerSKU = (product: Product): string => {
-    if (!product.attributes || product.attributes.length === 0) {
-      return '-';
-    }
-    
-    const skuAttribute = product.attributes.find(attr => attr.id === 'SELLER_SKU');
-    return skuAttribute ? skuAttribute.value_name : '-';
-  };
-
-  const getSalesBySKU = (sku: string): number => {
-    if (sku === '-') return 0;
-    return salesBySKU[sku] || 0;
-  };
-
-  const getStockStatus = (quantity: number): { label: string; color: string } => {
-    if (quantity <= 5) {
-      return { label: 'Stock bajo', color: 'bg-yellow-100 text-yellow-800' };
-    }
-    return { label: 'Stock normal', color: 'bg-green-100 text-green-800' };
-  };
-
-  const getPublicationStatus = (status: string): { label: string; color: string } => {
-    switch (status) {
-      case 'active':
-        return { label: '🟢 Activo', color: 'bg-green-100 text-green-800' };
-      case 'paused':
-        return { label: '🟡 Pausado', color: 'bg-yellow-100 text-yellow-800' };
-      case 'closed':
-        return { label: '🔴 Finalizado', color: 'bg-red-100 text-red-800' };
-      case 'under_review':
-        return { label: '🔵 En revisión', color: 'bg-blue-100 text-blue-800' };
-      case 'inactive':
-        return { label: '⚫ Inactivo', color: 'bg-gray-100 text-gray-800' };
-      default:
-        return { label: status, color: 'bg-gray-100 text-gray-800' };
-    }
-  };
-
-  const getFulfillmentType = (shipping: Product['shipping']): string => {
-    if (shipping.logistic_type === 'fulfillment') {
-      return '📦 Full';
-    } else if (shipping.logistic_type === 'xd_drop_off') {
-      return '⚡ Flex';
-    } else if (shipping.mode === 'me2') {
-      return '🚚 Mercado Envíos';
-    } else if (shipping.mode === 'not_specified') {
-      return '📍 Sin envío';
-    }
-    return '📍 Normal';
-  };
-
-  const formatPrice = (price: number): string => {
-    return new Intl.NumberFormat('es-AR', {
-      style: 'currency',
-      currency: 'ARS',
-      minimumFractionDigits: 0,
-    }).format(price);
-  };
-
-  const formatDate = (dateString: string): string => {
-    const date = new Date(dateString);
-    return date.toLocaleString('es-AR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+    setStats({
+      totalProducts: productList.length,
+      totalStock,
+      totalSold,
+      averagePrice,
     });
   };
 
-  const exportToExcel = () => {
-    const dataToExport = filteredProducts.map(product => {
-      const sku = getSellerSKU(product);
-      return {
-        'ID': product.id,
-        'Producto': product.title,
-        'SKU': sku,
-        'Unidades 60d': getSalesBySKU(sku),
-        'Stock': product.available_quantity,
-        'Estado Stock': getStockStatus(product.available_quantity).label,
-        'Estado Publicación': getPublicationStatus(product.status).label,
-        'Fulfillment': getFulfillmentType(product.shipping),
-        'Última Actualización': formatDate(product.last_updated),
-        'Precio': product.price,
-        'Link': product.permalink,
-      };
-    });
-
-    const ws = XLSX.utils.json_to_sheet(dataToExport);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Productos');
-
-    const maxWidth = 50;
-    const colWidths = Object.keys(dataToExport[0] || {}).map(key => {
-      const maxLength = Math.max(
-        key.length,
-        ...dataToExport.map(row => String(row[key as keyof typeof row]).length)
-      );
-      return { wch: Math.min(maxLength + 2, maxWidth) };
-    });
-    ws['!cols'] = colWidths;
-
-    // Nombre del archivo más descriptivo
-    let fileName = `productos-mercadolibre`;
-    if (searchTerm) {
-      fileName += `-busqueda`;
-    }
-    if (fulfillmentFilter !== 'todos') {
-      fileName += `-${fulfillmentFilter}`;
-    }
-    if (statusFilter !== 'todos') {
-      fileName += `-${statusFilter}`;
-    }
-    fileName += `-${filteredProducts.length}-productos-${new Date().toISOString().split('T')[0]}.xlsx`;
-    
-    XLSX.writeFile(wb, fileName);
-  };
-
-  const handleLogout = async () => {
-    await fetch('/api/logout', { method: 'POST' });
+  const handleLogout = () => {
+    document.cookie = 'ml_access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;';
     router.push('/');
   };
 
+  const exportToExcel = () => {
+    const headers = ['ID', 'Título', 'Precio', 'Stock', 'Vendidos', 'SKU', 'Fulfillment', 'Estado', 'Enlace'];
+    const data = filteredProducts.map(p => [
+      p.id,
+      p.title,
+      p.price,
+      p.available_quantity,
+      p.sold_quantity,
+      p.sku || 'N/A',
+      p.fulfillment || 'Normal',
+      p.status,
+      p.permalink
+    ]);
+
+    let csv = headers.join(',') + '\n';
+    data.forEach(row => {
+      csv += row.map(cell => `"${cell}"`).join(',') + '\n';
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `productos_ml_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+  };
+
+  const getFulfillmentBadge = (fulfillment?: string) => {
+    if (!fulfillment) return <span className="px-2 py-1 text-xs rounded bg-gray-100 text-gray-700">Normal</span>;
+    
+    const badges: { [key: string]: { color: string; label: string } } = {
+      'fulfillment': { color: 'bg-blue-100 text-blue-700', label: '📦 Full' },
+      'flex': { color: 'bg-purple-100 text-purple-700', label: '⚡ Flex' },
+      'normal': { color: 'bg-gray-100 text-gray-700', label: 'Normal' }
+    };
+
+    const badge = badges[fulfillment] || { color: 'bg-yellow-100 text-yellow-700', label: '📮 ME' };
+    return <span className={`px-2 py-1 text-xs rounded ${badge.color}`}>{badge.label}</span>;
+  };
+
+  const getStatusBadge = (status: string) => {
+    const badges: { [key: string]: { color: string; label: string } } = {
+      'active': { color: 'bg-green-100 text-green-700', label: '🟢 Activo' },
+      'paused': { color: 'bg-yellow-100 text-yellow-700', label: '🟡 Pausado' },
+      'closed': { color: 'bg-red-100 text-red-700', label: '🔴 Finalizado' },
+      'under_review': { color: 'bg-blue-100 text-blue-700', label: '🔵 En revisión' },
+      'inactive': { color: 'bg-gray-100 text-gray-700', label: '⚫ Inactivo' }
+    };
+
+    const badge = badges[status] || { color: 'bg-gray-100 text-gray-700', label: status };
+    return <span className={`px-2 py-1 text-xs rounded ${badge.color}`}>{badge.label}</span>;
+  };
+
+  // Paginación
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentProducts = filteredProducts.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+
+  const paginate = (pageNumber: number) => setCurrentPage(pageNumber);
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600 font-semibold">Cargando todos los productos...</p>
-          <p className="text-gray-500 text-sm mt-2">Esto puede tardar 15-30 segundos</p>
-          {loadingMore && total > 0 && (
-            <p className="text-blue-600 text-sm mt-2">
-              Cargando... ({products.length} de {total})
+      <div className="min-h-screen bg-gradient-to-br from-yellow-400 via-yellow-300 to-blue-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full">
+          <div className="text-center">
+            <div className="mb-4">
+              <div className="inline-block animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-yellow-500"></div>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">Cargando Productos</h2>
+            <p className="text-gray-600 mb-4">{loadingMessage}</p>
+            
+            {/* Barra de progreso */}
+            <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden mb-2">
+              <div 
+                className="bg-yellow-500 h-full transition-all duration-300 ease-out"
+                style={{ width: `${loadingProgress}%` }}
+              ></div>
+            </div>
+            <p className="text-sm text-gray-500">{loadingProgress}% completado</p>
+            
+            <p className="text-xs text-gray-400 mt-4">
+              ⏱️ Esto puede tomar 30-60 segundos...
             </p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-lg shadow-md p-8 max-w-md w-full">
-          <div className="text-red-600 text-center mb-4">
-            <svg className="w-12 h-12 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd"/>
-            </svg>
-            <h2 className="text-xl font-bold">Error</h2>
           </div>
-          <p className="text-gray-600 text-center mb-4">{error}</p>
-          <button
-            onClick={handleLogout}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-200"
-          >
-            Volver al inicio
-          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-yellow-400 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"/>
-                </svg>
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-800">Dashboard Mercado Libre</h1>
-                <p className="text-sm text-gray-500">Gestión de publicaciones</p>
-              </div>
-            </div>
+    <div className="min-h-screen bg-gradient-to-br from-yellow-400 via-yellow-300 to-blue-500 p-4">
+      <div className="max-w-[95%] mx-auto">
+        {/* Header */}
+        <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-3xl font-bold text-gray-800">📊 Dashboard Mercado Libre</h1>
             <button
               onClick={handleLogout}
-              className="text-gray-600 hover:text-gray-800 font-medium text-sm flex items-center gap-2"
+              className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-6 rounded-lg transition"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-              Cerrar sesión
+              Cerrar Sesión
             </button>
           </div>
-        </div>
-      </header>
 
-      {/* Main Content */}
-      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Search and Export */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
-          <div className="flex flex-col gap-4">
-            {/* Primera fila: Búsqueda y Exportar */}
-            <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
-              <div className="flex-1 w-full md:w-auto">
-                <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-2">
-                  Buscar producto:
-                </label>
-                <input
-                  id="search"
-                  type="text"
-                  placeholder="Buscar por nombre, SKU o ID..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
+          {/* Stats */}
+          {stats && (
+            <div className="grid grid-cols-4 gap-4 mb-6">
+              <div className="bg-blue-50 p-4 rounded-xl">
+                <p className="text-sm text-gray-600">Total Productos</p>
+                <p className="text-2xl font-bold text-blue-600">{stats.totalProducts}</p>
               </div>
-              <div className="flex items-end">
-                <button
-                  onClick={exportToExcel}
-                  disabled={filteredProducts.length === 0}
-                  className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 whitespace-nowrap"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  Exportar a Excel ({filteredProducts.length})
-                </button>
+              <div className="bg-green-50 p-4 rounded-xl">
+                <p className="text-sm text-gray-600">Stock Total</p>
+                <p className="text-2xl font-bold text-green-600">{stats.totalStock}</p>
+              </div>
+              <div className="bg-purple-50 p-4 rounded-xl">
+                <p className="text-sm text-gray-600">Ventas Totales</p>
+                <p className="text-2xl font-bold text-purple-600">{stats.totalSold}</p>
+              </div>
+              <div className="bg-yellow-50 p-4 rounded-xl">
+                <p className="text-sm text-gray-600">Precio Promedio</p>
+                <p className="text-2xl font-bold text-yellow-600">
+                  ${stats.averagePrice.toFixed(2)}
+                </p>
               </div>
             </div>
+          )}
 
-            {/* Segunda fila: Filtros y selector de cantidad */}
-            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between border-t pt-4">
-              <div className="flex flex-wrap items-center gap-4">
-                {/* Selector de productos por página */}
-                <div className="flex items-center gap-3">
-                  <label htmlFor="itemsPerPage" className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                    Productos por página:
-                  </label>
-                  <select
-                    id="itemsPerPage"
-                    value={itemsPerPage}
-                    onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
-                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-                  >
-                    <option value={50}>50</option>
-                    <option value={100}>100</option>
-                    <option value={200}>200</option>
-                    <option value={500}>500</option>
-                  </select>
-                </div>
-                
-                {/* Filtro de Fulfillment */}
-                <div className="flex items-center gap-3">
-                  <label htmlFor="fulfillmentFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                    Fulfillment:
-                  </label>
-                  <select
-                    id="fulfillmentFilter"
-                    value={fulfillmentFilter}
-                    onChange={(e) => setFulfillmentFilter(e.target.value)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white min-w-[160px]"
-                  >
-                    <option value="todos">Todos</option>
-                    <option value="full">📦 Full</option>
-                    <option value="flex">⚡ Flex</option>
-                    <option value="me">🚚 Mercado Envíos</option>
-                    <option value="normal">📍 Normal/Sin envío</option>
-                  </select>
-                </div>
+          {/* Filtros y Búsqueda */}
+          <div className="flex gap-4 items-center">
+            <input
+              type="text"
+              placeholder="🔍 Buscar por título, ID o SKU..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            />
+            
+            <select
+              value={fulfillmentFilter}
+              onChange={(e) => setFulfillmentFilter(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            >
+              <option value="all">Todos los envíos</option>
+              <option value="fulfillment">📦 Full</option>
+              <option value="flex">⚡ Flex</option>
+              <option value="normal">📮 Mercado Envíos</option>
+              <option value="none">Normal</option>
+            </select>
 
-                {/* Filtro de Estado de Publicación */}
-                <div className="flex items-center gap-3">
-                  <label htmlFor="statusFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                    Estado:
-                  </label>
-                  <select
-                    id="statusFilter"
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white min-w-[160px]"
-                  >
-                    <option value="todos">Todos</option>
-                    <option value="active">🟢 Activo</option>
-                    <option value="paused">🟡 Pausado</option>
-                    <option value="closed">🔴 Finalizado</option>
-                    <option value="under_review">🔵 En revisión</option>
-                    <option value="inactive">⚫ Inactivo</option>
-                  </select>
-                </div>
-              </div>
-              
-              <div className="text-sm text-gray-600">
-                <span className="font-semibold">Total: {products.length.toLocaleString()}</span> productos cargados
-                {(searchTerm || fulfillmentFilter !== 'todos' || statusFilter !== 'todos') && (
-                  <span> • Mostrando <span className="font-semibold">{filteredProducts.length}</span> resultados • Página {currentPage} de {totalPages}</span>
-                )}
-                {!searchTerm && fulfillmentFilter === 'todos' && statusFilter === 'todos' && (
-                  <span> • Viendo del <span className="font-semibold">{startItem}</span> al <span className="font-semibold">{endItem}</span></span>
-                )}
-              </div>
-            </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            >
+              <option value="all">Todos los estados</option>
+              <option value="active">🟢 Activo</option>
+              <option value="paused">🟡 Pausado</option>
+              <option value="closed">🔴 Finalizado</option>
+              <option value="under_review">🔵 En revisión</option>
+              <option value="inactive">⚫ Inactivo</option>
+            </select>
+
+            <button
+              onClick={exportToExcel}
+              className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-6 rounded-lg transition whitespace-nowrap"
+            >
+              📥 Exportar CSV
+            </button>
+          </div>
+
+          {/* Info de resultados */}
+          <div className="mt-4 text-sm text-gray-600">
+            Mostrando {currentProducts.length} de {filteredProducts.length} productos
+            {searchTerm && ` (filtrados de ${products.length} totales)`}
           </div>
         </div>
 
-        {/* Products Table */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        {/* Tabla de Productos */}
+        <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="w-full">
+              <thead className="bg-yellow-500 text-white">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[450px] min-w-[450px]">
-                    Producto
-                  </th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
-                    SKU
-                  </th>
-                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
-                    Unidades 60d
-                  </th>
-                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-16">
-                    Stock
-                  </th>
-                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
-                    Estado Stock
-                  </th>
-                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-36">
-                    Estado Publicación
-                  </th>
-                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
-                    Fulfillment
-                  </th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
-                    Última actualización
-                  </th>
-                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-28">
-                    Precio
-                  </th>
+                  <th className="px-4 py-3 text-left w-[5%]">Imagen</th>
+                  <th className="px-4 py-3 text-left w-[35%]">Producto</th>
+                  <th className="px-4 py-3 text-left w-[8%]">SKU</th>
+                  <th className="px-4 py-3 text-right w-[10%]">Precio</th>
+                  <th className="px-4 py-3 text-center w-[8%]">Stock</th>
+                  <th className="px-4 py-3 text-center w-[8%]">Vendidos</th>
+                  <th className="px-4 py-3 text-center w-[12%]">Fulfillment</th>
+                  <th className="px-4 py-3 text-center w-[12%]">Estado</th>
+                  <th className="px-4 py-3 text-center w-[5%]">Ver</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {paginatedProducts.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="px-6 py-12 text-center">
-                      <div className="text-gray-400">
-                        <svg className="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-                        </svg>
-                        <p className="text-sm">No se encontraron productos</p>
-                      </div>
+              <tbody>
+                {currentProducts.map((product, index) => (
+                  <tr key={product.id} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                    <td className="px-4 py-3">
+                      <img 
+                        src={product.thumbnail} 
+                        alt={product.title}
+                        className="w-12 h-12 object-cover rounded"
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-gray-800">{product.title}</div>
+                      <div className="text-xs text-gray-500">{product.id}</div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600">
+                      {product.sku || 'N/A'}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-gray-800">
+                      ${product.price.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`font-bold ${product.available_quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {product.available_quantity}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center text-gray-600">
+                      {product.sold_quantity}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {getFulfillmentBadge(product.fulfillment)}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {getStatusBadge(product.status)}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <a
+                        href={product.permalink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-500 hover:text-blue-700 text-xl"
+                      >
+                        🔗
+                      </a>
                     </td>
                   </tr>
-                ) : (
-                  paginatedProducts.map((product) => {
-                    const stockStatus = getStockStatus(product.available_quantity);
-                    const pubStatus = getPublicationStatus(product.status);
-                    const sku = getSellerSKU(product);
-                    const sales60d = getSalesBySKU(sku);
-
-                    return (
-                      <tr key={product.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-4">
-                          <div>
-                            <a
-                              href={product.permalink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 hover:text-blue-800 font-medium hover:underline"
-                            >
-                              {product.title}
-                            </a>
-                            <p className="text-xs text-gray-500 mt-1">{product.id}</p>
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 text-sm text-gray-900">
-                          {sku}
-                        </td>
-                        <td className="px-3 py-4 text-center">
-                          {loadingSales ? (
-                            <div className="flex justify-center">
-                              <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-                            </div>
-                          ) : (
-                            <span className="text-sm font-bold text-blue-600">
-                              {sales60d > 0 ? sales60d : '-'}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-4 text-sm font-semibold text-gray-900 text-center">
-                          {product.available_quantity}
-                        </td>
-                        <td className="px-3 py-4 text-center">
-                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${stockStatus.color}`}>
-                            {stockStatus.label}
-                          </span>
-                        </td>
-                        <td className="px-3 py-4 text-center">
-                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${pubStatus.color}`}>
-                            {pubStatus.label}
-                          </span>
-                        </td>
-                        <td className="px-3 py-4 text-sm text-gray-900 text-center">
-                          {getFulfillmentType(product.shipping)}
-                        </td>
-                        <td className="px-3 py-4 text-xs text-gray-900">
-                          {formatDate(product.last_updated)}
-                        </td>
-                        <td className="px-3 py-4 text-sm font-semibold text-green-600 text-right">
-                          {formatPrice(product.price)}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
+                ))}
               </tbody>
             </table>
           </div>
-        </div>
 
-        {/* Paginación */}
-        {totalPages > 1 && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mt-6">
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-              {/* Información de página */}
-              <div className="text-sm text-gray-600">
-                Página <span className="font-semibold">{currentPage}</span> de <span className="font-semibold">{totalPages}</span>
-              </div>
+          {/* Paginación */}
+          <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-t">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">Mostrar:</span>
+              <select
+                value={itemsPerPage}
+                onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                className="px-3 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-yellow-500"
+              >
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+                <option value={500}>500</option>
+              </select>
+              <span className="text-sm text-gray-600">por página</span>
+            </div>
 
-              {/* Botones de navegación */}
-              <div className="flex items-center gap-2">
-                {/* Primera página */}
-                <button
-                  onClick={() => handlePageChange(1)}
-                  disabled={currentPage === 1}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition"
-                  title="Primera página"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-                  </svg>
-                </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => paginate(1)}
+                disabled={currentPage === 1}
+                className={`px-3 py-1 rounded ${
+                  currentPage === 1
+                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-yellow-500 text-white hover:bg-yellow-600'
+                }`}
+              >
+                ⏮️ Primera
+              </button>
+              
+              <button
+                onClick={() => paginate(currentPage - 1)}
+                disabled={currentPage === 1}
+                className={`px-3 py-1 rounded ${
+                  currentPage === 1
+                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-yellow-500 text-white hover:bg-yellow-600'
+                }`}
+              >
+                ◀️ Anterior
+              </button>
 
-                {/* Página anterior */}
-                <button
-                  onClick={() => handlePageChange(currentPage - 1)}
-                  disabled={currentPage === 1}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition"
-                >
-                  Anterior
-                </button>
+              <span className="px-4 py-1 bg-white border border-gray-300 rounded">
+                Página {currentPage} de {totalPages}
+              </span>
 
-                {/* Páginas numeradas */}
-                <div className="hidden sm:flex items-center gap-1">
-                  {/* Primera página siempre visible */}
-                  {currentPage > 3 && (
-                    <>
-                      <button
-                        onClick={() => handlePageChange(1)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition"
-                      >
-                        1
-                      </button>
-                      {currentPage > 4 && <span className="px-2 text-gray-500">...</span>}
-                    </>
-                  )}
+              <button
+                onClick={() => paginate(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className={`px-3 py-1 rounded ${
+                  currentPage === totalPages
+                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-yellow-500 text-white hover:bg-yellow-600'
+                }`}
+              >
+                Siguiente ▶️
+              </button>
 
-                  {/* Páginas cercanas a la actual */}
-                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                    const pageNum = currentPage <= 3 
-                      ? i + 1 
-                      : currentPage >= totalPages - 2
-                        ? totalPages - 4 + i
-                        : currentPage - 2 + i;
-                    
-                    if (pageNum < 1 || pageNum > totalPages) return null;
-                    
-                    return (
-                      <button
-                        key={pageNum}
-                        onClick={() => handlePageChange(pageNum)}
-                        className={`px-3 py-2 border rounded-lg text-sm font-medium transition ${
-                          currentPage === pageNum
-                            ? 'bg-blue-600 text-white border-blue-600'
-                            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                        }`}
-                      >
-                        {pageNum}
-                      </button>
-                    );
-                  })}
-
-                  {/* Última página siempre visible */}
-                  {currentPage < totalPages - 2 && (
-                    <>
-                      {currentPage < totalPages - 3 && <span className="px-2 text-gray-500">...</span>}
-                      <button
-                        onClick={() => handlePageChange(totalPages)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition"
-                      >
-                        {totalPages}
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                {/* Página siguiente */}
-                <button
-                  onClick={() => handlePageChange(currentPage + 1)}
-                  disabled={currentPage === totalPages}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition"
-                >
-                  Siguiente
-                </button>
-
-                {/* Última página */}
-                <button
-                  onClick={() => handlePageChange(totalPages)}
-                  disabled={currentPage === totalPages}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition"
-                  title="Última página"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-                  </svg>
-                </button>
-              </div>
-
-              {/* Input para ir a página específica */}
-              <div className="flex items-center gap-2">
-                <label htmlFor="goToPage" className="text-sm text-gray-600 whitespace-nowrap">
-                  Ir a página:
-                </label>
-                <input
-                  id="goToPage"
-                  type="number"
-                  min="1"
-                  max={totalPages}
-                  placeholder={currentPage.toString()}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const page = parseInt((e.target as HTMLInputElement).value);
-                      if (page >= 1 && page <= totalPages) {
-                        handlePageChange(page);
-                        (e.target as HTMLInputElement).value = '';
-                      }
-                    }
-                  }}
-                  className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
+              <button
+                onClick={() => paginate(totalPages)}
+                disabled={currentPage === totalPages}
+                className={`px-3 py-1 rounded ${
+                  currentPage === totalPages
+                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-yellow-500 text-white hover:bg-yellow-600'
+                }`}
+              >
+                Última ⏭️
+              </button>
             </div>
           </div>
-        )}
-      </main>
+        </div>
+      </div>
     </div>
   );
 }
