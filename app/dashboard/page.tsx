@@ -182,7 +182,7 @@ export default function Dashboard() {
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(product => {
-        const sku = product.attributes.find(attr => attr.id === 'SELLER_SKU')?.value_name || '';
+        const sku = product.attributes?.find(attr => attr.id === 'SELLER_SKU')?.value_name || '';
         return (
           product.title.toLowerCase().includes(term) ||
           product.id.toLowerCase().includes(term) ||
@@ -244,7 +244,7 @@ export default function Dashboard() {
 
   const exportToExcel = () => {
     const dataToExport = filteredProducts.map(product => {
-      const sku = product.attributes.find(attr => attr.id === 'SELLER_SKU')?.value_name || 'N/A';
+      const sku = product.attributes?.find(attr => attr.id === 'SELLER_SKU')?.value_name || 'N/A';
       const sales60d = salesBySKU[sku] || 0;
       
       return {
@@ -404,7 +404,7 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {paginatedProducts.map((product, index) => {
-                  const sku = product.attributes.find(attr => attr.id === 'SELLER_SKU')?.value_name || 'N/A';
+                  const sku = product.attributes?.find(attr => attr.id === 'SELLER_SKU')?.value_name || 'N/A';
                   const sales60d = salesBySKU[sku] || 0;
                   
                   return (
