@@ -41,6 +41,7 @@ export default function Dashboard() {
   
   // Estados para filtros
   const [fulfillmentFilter, setFulfillmentFilter] = useState<string>('todos');
+  const [statusFilter, setStatusFilter] = useState<string>('todos');
 
   useEffect(() => {
     fetchProducts();
@@ -48,7 +49,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     filterProducts();
-  }, [searchTerm, products, fulfillmentFilter]);
+  }, [searchTerm, products, fulfillmentFilter, statusFilter]);
   
   useEffect(() => {
     paginateProducts();
@@ -148,6 +149,11 @@ export default function Dashboard() {
       });
     }
     
+    // Filtro por estado de publicación
+    if (statusFilter !== 'todos') {
+      filtered = filtered.filter(product => product.status === statusFilter);
+    }
+    
     setFilteredProducts(filtered);
   };
 
@@ -184,11 +190,15 @@ export default function Dashboard() {
   const getPublicationStatus = (status: string): { label: string; color: string } => {
     switch (status) {
       case 'active':
-        return { label: 'Activo', color: 'bg-green-100 text-green-800' };
+        return { label: '🟢 Activo', color: 'bg-green-100 text-green-800' };
       case 'paused':
-        return { label: 'Pausado', color: 'bg-gray-100 text-gray-800' };
+        return { label: '🟡 Pausado', color: 'bg-yellow-100 text-yellow-800' };
       case 'closed':
-        return { label: 'Finalizado', color: 'bg-red-100 text-red-800' };
+        return { label: '🔴 Finalizado', color: 'bg-red-100 text-red-800' };
+      case 'under_review':
+        return { label: '🔵 En revisión', color: 'bg-blue-100 text-blue-800' };
+      case 'inactive':
+        return { label: '⚫ Inactivo', color: 'bg-gray-100 text-gray-800' };
       default:
         return { label: status, color: 'bg-gray-100 text-gray-800' };
     }
@@ -261,6 +271,9 @@ export default function Dashboard() {
     }
     if (fulfillmentFilter !== 'todos') {
       fileName += `-${fulfillmentFilter}`;
+    }
+    if (statusFilter !== 'todos') {
+      fileName += `-${statusFilter}`;
     }
     fileName += `-${filteredProducts.length}-productos-${new Date().toISOString().split('T')[0]}.xlsx`;
     
@@ -414,14 +427,34 @@ export default function Dashboard() {
                     <option value="normal">📍 Normal/Sin envío</option>
                   </select>
                 </div>
+
+                {/* Filtro de Estado de Publicación */}
+                <div className="flex items-center gap-3">
+                  <label htmlFor="statusFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    Estado:
+                  </label>
+                  <select
+                    id="statusFilter"
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white min-w-[160px]"
+                  >
+                    <option value="todos">Todos</option>
+                    <option value="active">🟢 Activo</option>
+                    <option value="paused">🟡 Pausado</option>
+                    <option value="closed">🔴 Finalizado</option>
+                    <option value="under_review">🔵 En revisión</option>
+                    <option value="inactive">⚫ Inactivo</option>
+                  </select>
+                </div>
               </div>
               
               <div className="text-sm text-gray-600">
                 <span className="font-semibold">Total: {products.length.toLocaleString()}</span> productos cargados
-                {(searchTerm || fulfillmentFilter !== 'todos') && (
+                {(searchTerm || fulfillmentFilter !== 'todos' || statusFilter !== 'todos') && (
                   <span> • Mostrando <span className="font-semibold">{filteredProducts.length}</span> resultados • Página {currentPage} de {totalPages}</span>
                 )}
-                {!searchTerm && fulfillmentFilter === 'todos' && (
+                {!searchTerm && fulfillmentFilter === 'todos' && statusFilter === 'todos' && (
                   <span> • Viendo del <span className="font-semibold">{startItem}</span> al <span className="font-semibold">{endItem}</span></span>
                 )}
               </div>
