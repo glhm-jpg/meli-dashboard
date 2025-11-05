@@ -32,19 +32,22 @@ export async function GET(request: NextRequest) {
     const sixtyDaysAgo = new Date(today);
     sixtyDaysAgo.setDate(today.getDate() - 60);
     
-    // Formato ISO para la API de ML
-    const dateFrom = sixtyDaysAgo.toISOString();
-    const dateTo = today.toISOString();
+    // Formato para la API de ML (sin milisegundos, formato correcto)
+    const dateFrom = sixtyDaysAgo.toISOString().split('.')[0] + 'Z';
+    const dateTo = today.toISOString().split('.')[0] + 'Z';
+
+    console.log(`Buscando ventas desde ${dateFrom} hasta ${dateTo}`);
 
     // 3. Obtener todas las órdenes de los últimos 60 días
     let allOrders: any[] = [];
     let offset = 0;
     const limit = 50; // ML devuelve máximo 50 por página
     let hasMore = true;
+    let totalFound = 0;
 
     while (hasMore) {
       const ordersResponse = await fetch(
-        `https://api.mercadolibre.com/orders/search?seller=${userId}&order.date_created.from=${dateFrom}&order.date_created.to=${dateTo}&offset=${offset}&limit=${limit}`,
+        `https://api.mercadolibre.com/orders/search?seller=${userId}&order.date_created.from=${encodeURIComponent(dateFrom)}&order.date_created.to=${encodeURIComponent(dateTo)}&offset=${offset}&limit=${limit}`,
         {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -53,26 +56,31 @@ export async function GET(request: NextRequest) {
       );
 
       if (!ordersResponse.ok) {
-        console.error('Error obteniendo órdenes');
+        console.error(`Error obteniendo órdenes (offset ${offset}):`, ordersResponse.status);
         break;
       }
 
       const ordersData = await ordersResponse.json();
-      allOrders = allOrders.concat(ordersData.results || []);
+      const results = ordersData.results || [];
+      allOrders = allOrders.concat(results);
       
       // Verificar si hay más páginas
-      const total = ordersData.paging?.total || 0;
+      totalFound = ordersData.paging?.total || 0;
       offset += limit;
-      hasMore = offset < total;
+      hasMore = offset < totalFound && results.length > 0;
       
-      // Límite de seguridad: no más de 1000 órdenes (20 páginas)
-      if (offset >= 1000) {
+      console.log(`Cargadas ${allOrders.length} de ${totalFound} órdenes`);
+      
+      // Límite de seguridad: no más de 2000 órdenes (40 páginas)
+      if (offset >= 2000) {
+        console.log('Alcanzado límite de seguridad de 2000 órdenes');
         break;
       }
     }
 
-    // 4. Extraer todos los item_ids vendidos con sus cantidades
+    // 4. Extraer todos los item_ids vendidos con sus cantidades (UNIDADES, no transacciones)
     const itemSales: { [itemId: string]: number } = {};
+    let totalUnits = 0;
     
     for (const order of allOrders) {
       if (order.order_items && Array.isArray(order.order_items)) {
@@ -80,16 +88,20 @@ export async function GET(request: NextRequest) {
           const itemId = orderItem.item?.id;
           const quantity = orderItem.quantity || 0;
           
-          if (itemId) {
+          if (itemId && quantity > 0) {
             itemSales[itemId] = (itemSales[itemId] || 0) + quantity;
+            totalUnits += quantity;
           }
         }
       }
     }
+    
+    console.log(`Total de unidades vendidas en todas las órdenes: ${totalUnits}`);
 
-    // 5. Obtener los SKUs de cada item vendido
+    // 5. Obtener los SKUs de cada item vendido y agrupar unidades por SKU
     const itemIds = Object.keys(itemSales);
     const salesBySKU: { [sku: string]: number } = {};
+    let processedItems = 0;
 
     // Procesar en batches de 20 (límite de multiget de ML)
     for (let i = 0; i < itemIds.length; i += 20) {
@@ -117,18 +129,25 @@ export async function GET(request: NextRequest) {
             const skuAttribute = attributes.find((attr: any) => attr.id === 'SELLER_SKU');
             const sku = skuAttribute?.value_name || 'SIN-SKU';
             
-            // Sumar las ventas a este SKU
-            const quantity = itemSales[itemId] || 0;
-            salesBySKU[sku] = (salesBySKU[sku] || 0) + quantity;
+            // Sumar las UNIDADES vendidas a este SKU
+            const units = itemSales[itemId] || 0;
+            salesBySKU[sku] = (salesBySKU[sku] || 0) + units;
+            processedItems++;
           }
         }
       }
     }
+    
+    console.log(`Procesados ${processedItems} items diferentes con ventas`);
+    console.log(`SKUs con ventas: ${Object.keys(salesBySKU).length}`);
 
     return NextResponse.json({
       salesBySKU,
       totalOrders: allOrders.length,
+      totalUnitsAllSKUs: totalUnits,
       periodDays: 60,
+      dateFrom,
+      dateTo,
     });
 
   } catch (error) {
