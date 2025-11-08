@@ -33,24 +33,22 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [total, setTotal] = useState(0);
-  const [salesBySKU, setSalesBySKU] = useState<{ [sku: string]: number }>({});
-  const [loadingSales, setLoadingSales] = useState(false);
   
+  // Estados para paginación
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(50);
   const [loadingMore, setLoadingMore] = useState(false);
   
+  // Estados para filtros
   const [fulfillmentFilter, setFulfillmentFilter] = useState<string>('todos');
-  const [statusFilter, setStatusFilter] = useState<string>('todos');
 
   useEffect(() => {
     fetchProducts();
-    fetchSales();
   }, []);
 
   useEffect(() => {
     filterProducts();
-  }, [searchTerm, products, fulfillmentFilter, statusFilter]);
+  }, [searchTerm, products, fulfillmentFilter]);
   
   useEffect(() => {
     paginateProducts();
@@ -67,6 +65,7 @@ export default function Dashboard() {
     try {
       setLoading(true);
       
+      // Primero obtenemos el total para saber cuántos productos hay
       const initialResponse = await fetch('/api/products?offset=0&limit=50');
       
       if (initialResponse.status === 401) {
@@ -82,28 +81,26 @@ export default function Dashboard() {
       const totalProducts = initialData.total;
       setTotal(totalProducts);
       
+      // Cargar todos los productos en batches de 50
       const allProducts: Product[] = [...initialData.products];
       const batchSize = 50;
-      const initialLoadLimit = 500;
-      const initialBatches = Math.ceil(initialLoadLimit / batchSize);
       
-      console.log(`📦 Cargando primeros ${initialLoadLimit} productos de ${totalProducts} totales...`);
+      // Calcular cuántos batches necesitamos
+      const totalBatches = Math.ceil(totalProducts / batchSize);
       
-      for (let i = 1; i < initialBatches; i++) {
+      // Cargar el resto de los batches
+      for (let i = 1; i < totalBatches; i++) {
         const offset = i * batchSize;
-        
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
         const response = await fetch(`/api/products?offset=${offset}&limit=${batchSize}`);
         
         if (response.ok) {
           const data = await response.json();
           allProducts.push(...data.products);
+          
+          // Actualizar progreso
           setLoadingMore(true);
         }
       }
-      
-      console.log(`✅ Primeros ${allProducts.length} productos cargados`);
       
       setProducts(allProducts);
       setFilteredProducts(allProducts);
@@ -116,81 +113,23 @@ export default function Dashboard() {
     }
   };
 
-  const loadMoreProducts = async () => {
-    try {
-      setLoadingMore(true);
-      
-      const currentCount = products.length;
-      const batchSize = 50;
-      const loadMoreLimit = 500;
-      const moreBatches = Math.ceil(loadMoreLimit / batchSize);
-      
-      console.log(`📦 Cargando ${loadMoreLimit} productos más desde offset ${currentCount}...`);
-      
-      const moreProducts: Product[] = [];
-      
-      for (let i = 0; i < moreBatches; i++) {
-        const offset = currentCount + (i * batchSize);
-        
-        if (offset >= total) {
-          console.log('✅ Todos los productos cargados');
-          break;
-        }
-        
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        const response = await fetch(`/api/products?offset=${offset}&limit=${batchSize}`);
-        
-        if (response.ok) {
-          const data = await response.json();
-          moreProducts.push(...data.products);
-        }
-      }
-      
-      console.log(`✅ Cargados ${moreProducts.length} productos adicionales`);
-      
-      const updatedProducts = [...products, ...moreProducts];
-      setProducts(updatedProducts);
-      setFilteredProducts(updatedProducts);
-      
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error cargando más productos');
-    } finally {
-      setLoadingMore(false);
-    }
-  };
-
-  const fetchSales = async () => {
-    try {
-      setLoadingSales(true);
-      const response = await fetch('/api/sales');
-      
-      if (response.ok) {
-        const data = await response.json();
-        setSalesBySKU(data.salesBySKU || {});
-      }
-    } catch (err) {
-      console.error('Error cargando ventas:', err);
-    } finally {
-      setLoadingSales(false);
-    }
-  };
-
   const filterProducts = () => {
-    let filtered = [...products];
-
-    if (searchTerm) {
+    let filtered = products;
+    
+    // Filtro por búsqueda de texto
+    if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(product => {
-        const sku = product.attributes?.find(attr => attr.id === 'seller_sku')?.value_name || '';
+        const sku = getSellerSKU(product);
         return (
           product.title.toLowerCase().includes(term) ||
           product.id.toLowerCase().includes(term) ||
-          sku.toLowerCase().includes(term)
+          (sku !== '-' && sku.toLowerCase().includes(term))
         );
       });
     }
-
+    
+    // Filtro por tipo de fulfillment
     if (fulfillmentFilter !== 'todos') {
       filtered = filtered.filter(product => {
         switch (fulfillmentFilter) {
@@ -198,7 +137,7 @@ export default function Dashboard() {
             return product.shipping.logistic_type === 'fulfillment';
           case 'flex':
             return product.shipping.logistic_type === 'xd_drop_off';
-          case 'mercadoenvios':
+          case 'me':
             return product.shipping.mode === 'me2';
           case 'normal':
             return product.shipping.mode === 'not_specified' || 
@@ -208,13 +147,51 @@ export default function Dashboard() {
         }
       });
     }
-
-    if (statusFilter !== 'todos') {
-      filtered = filtered.filter(product => product.status === statusFilter);
-    }
-
+    
     setFilteredProducts(filtered);
+  };
+
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleItemsPerPageChange = (newLimit: number) => {
+    setItemsPerPage(newLimit);
     setCurrentPage(1);
+  };
+
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+  const startItem = (currentPage - 1) * itemsPerPage + 1;
+  const endItem = Math.min(currentPage * itemsPerPage, filteredProducts.length);
+
+  const getSellerSKU = (product: Product): string => {
+    if (!product.attributes || product.attributes.length === 0) {
+      return '-';
+    }
+    
+    const skuAttribute = product.attributes.find(attr => attr.id === 'SELLER_SKU');
+    return skuAttribute ? skuAttribute.value_name : '-';
+  };
+
+  const getStockStatus = (quantity: number): { label: string; color: string } => {
+    if (quantity <= 5) {
+      return { label: 'Stock bajo', color: 'bg-yellow-100 text-yellow-800' };
+    }
+    return { label: 'Stock normal', color: 'bg-green-100 text-green-800' };
+  };
+
+  const getPublicationStatus = (status: string): { label: string; color: string } => {
+    switch (status) {
+      case 'active':
+        return { label: 'Activo', color: 'bg-green-100 text-green-800' };
+      case 'paused':
+        return { label: 'Pausado', color: 'bg-gray-100 text-gray-800' };
+      case 'closed':
+        return { label: 'Finalizado', color: 'bg-red-100 text-red-800' };
+      default:
+        return { label: status, color: 'bg-gray-100 text-gray-800' };
+    }
   };
 
   const getFulfillmentType = (shipping: Product['shipping']): string => {
@@ -223,61 +200,90 @@ export default function Dashboard() {
     } else if (shipping.logistic_type === 'xd_drop_off') {
       return '⚡ Flex';
     } else if (shipping.mode === 'me2') {
-      return '📮 Mercado Envíos';
+      return '🚚 Mercado Envíos';
     } else if (shipping.mode === 'not_specified') {
-      return 'Normal';
+      return '📍 Sin envío';
     }
-    return 'Desconocido';
+    return '📍 Normal';
   };
 
-  const getStatusBadge = (status: string) => {
-    const badges: { [key: string]: { color: string; label: string } } = {
-      'active': { color: 'bg-green-100 text-green-700', label: '🟢 Activo' },
-      'paused': { color: 'bg-yellow-100 text-yellow-700', label: '🟡 Pausado' },
-      'closed': { color: 'bg-red-100 text-red-700', label: '🔴 Cerrado' },
-      'under_review': { color: 'bg-blue-100 text-blue-700', label: '🔵 En revisión' },
-      'inactive': { color: 'bg-gray-100 text-gray-700', label: '⚫ Inactivo' }
-    };
-    const badge = badges[status] || { color: 'bg-gray-100 text-gray-700', label: status };
-    return <span className={`px-2 py-1 text-xs rounded ${badge.color}`}>{badge.label}</span>;
+  const formatPrice = (price: number): string => {
+    return new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: 'ARS',
+      minimumFractionDigits: 0,
+    }).format(price);
+  };
+
+  const formatDate = (dateString: string): string => {
+    const date = new Date(dateString);
+    return date.toLocaleString('es-AR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   const exportToExcel = () => {
-    const dataToExport = filteredProducts.map(product => {
-      const sku = product.attributes?.find(attr => attr.id === 'seller_sku')?.value_name || 'N/A';
-      const sales60d = salesBySKU[sku] || 0;
-      
-      return {
-        'ID': product.id,
-        'Título': product.title,
-        'SKU': sku,
-        'Precio': product.price,
-        'Stock': product.available_quantity,
-        'Ventas 60d': sales60d,
-        'Fulfillment': getFulfillmentType(product.shipping),
-        'Estado': product.status,
-        'Enlace': product.permalink
-      };
-    });
+    const dataToExport = filteredProducts.map(product => ({
+      'ID': product.id,
+      'Producto': product.title,
+      'SKU': getSellerSKU(product),
+      'Stock': product.available_quantity,
+      'Estado Stock': getStockStatus(product.available_quantity).label,
+      'Estado Publicación': getPublicationStatus(product.status).label,
+      'Fulfillment': getFulfillmentType(product.shipping),
+      'Última Actualización': formatDate(product.last_updated),
+      'Precio': product.price,
+      'Link': product.permalink,
+    }));
 
     const ws = XLSX.utils.json_to_sheet(dataToExport);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Productos');
-    XLSX.writeFile(wb, `productos_ml_${new Date().toISOString().split('T')[0]}.xlsx`);
+
+    const maxWidth = 50;
+    const colWidths = Object.keys(dataToExport[0] || {}).map(key => {
+      const maxLength = Math.max(
+        key.length,
+        ...dataToExport.map(row => String(row[key as keyof typeof row]).length)
+      );
+      return { wch: Math.min(maxLength + 2, maxWidth) };
+    });
+    ws['!cols'] = colWidths;
+
+    // Nombre del archivo más descriptivo
+    let fileName = `productos-mercadolibre`;
+    if (searchTerm) {
+      fileName += `-busqueda`;
+    }
+    if (fulfillmentFilter !== 'todos') {
+      fileName += `-${fulfillmentFilter}`;
+    }
+    fileName += `-${filteredProducts.length}-productos-${new Date().toISOString().split('T')[0]}.xlsx`;
+    
+    XLSX.writeFile(wb, fileName);
   };
 
-  const handleLogout = () => {
-    document.cookie = 'meli_access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+  const handleLogout = async () => {
+    await fetch('/api/logout', { method: 'POST' });
     router.push('/');
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-yellow-400 via-yellow-300 to-blue-500 flex items-center justify-center">
-        <div className="bg-white p-8 rounded-xl shadow-2xl">
-          <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-yellow-500 mx-auto mb-4"></div>
-          <p className="text-xl font-semibold text-gray-700">Cargando productos...</p>
-          <p className="text-sm text-gray-500 mt-2">Primeros 500 productos (10 segundos)</p>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 font-semibold">Cargando todos los productos...</p>
+          <p className="text-gray-500 text-sm mt-2">Esto puede tardar 15-30 segundos</p>
+          {loadingMore && total > 0 && (
+            <p className="text-blue-600 text-sm mt-2">
+              Cargando... ({products.length} de {total})
+            </p>
+          )}
         </div>
       </div>
     );
@@ -285,12 +291,18 @@ export default function Dashboard() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-yellow-400 via-yellow-300 to-blue-500 flex items-center justify-center">
-        <div className="bg-white p-8 rounded-xl shadow-2xl max-w-md">
-          <p className="text-red-600 font-semibold">Error: {error}</p>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg shadow-md p-8 max-w-md w-full">
+          <div className="text-red-600 text-center mb-4">
+            <svg className="w-12 h-12 mx-auto mb-2" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd"/>
+            </svg>
+            <h2 className="text-xl font-bold">Error</h2>
+          </div>
+          <p className="text-gray-600 text-center mb-4">{error}</p>
           <button
-            onClick={() => router.push('/')}
-            className="mt-4 bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded"
+            onClick={handleLogout}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-200"
           >
             Volver al inicio
           </button>
@@ -299,213 +311,357 @@ export default function Dashboard() {
     );
   }
 
-  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-yellow-400 via-yellow-300 to-blue-500 p-4">
-      <div className="max-w-7xl mx-auto">
-        <div className="bg-white rounded-xl shadow-xl p-6 mb-6">
-          <div className="flex justify-between items-center mb-6">
-            <h1 className="text-3xl font-bold text-gray-800">📊 Dashboard Mercado Libre</h1>
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b border-gray-200">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-yellow-400 rounded-lg flex items-center justify-center">
+                <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"/>
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-gray-800">Dashboard Mercado Libre</h1>
+                <p className="text-sm text-gray-500">Gestión de publicaciones</p>
+              </div>
+            </div>
             <button
               onClick={handleLogout}
-              className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg"
+              className="text-gray-600 hover:text-gray-800 font-medium text-sm flex items-center gap-2"
             >
-              Cerrar Sesión
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Cerrar sesión
             </button>
           </div>
+        </div>
+      </header>
 
-          <div className="grid grid-cols-4 gap-4 mb-6">
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-600">Productos Cargados</p>
-              <p className="text-2xl font-bold text-blue-600">{products.length} / {total}</p>
+      {/* Main Content */}
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Search and Export */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+          <div className="flex flex-col gap-4">
+            {/* Primera fila: Búsqueda y Exportar */}
+            <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+              <div className="flex-1 w-full md:w-auto">
+                <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-2">
+                  Buscar producto:
+                </label>
+                <input
+                  id="search"
+                  type="text"
+                  placeholder="Buscar por nombre, SKU o ID..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div className="flex items-end">
+                <button
+                  onClick={exportToExcel}
+                  disabled={filteredProducts.length === 0}
+                  className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 whitespace-nowrap"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Exportar a Excel ({filteredProducts.length})
+                </button>
+              </div>
             </div>
-            <div className="bg-green-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-600">Mostrando</p>
-              <p className="text-2xl font-bold text-green-600">{filteredProducts.length}</p>
+
+            {/* Segunda fila: Filtros y selector de cantidad */}
+            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between border-t pt-4">
+              <div className="flex flex-wrap items-center gap-4">
+                {/* Selector de productos por página */}
+                <div className="flex items-center gap-3">
+                  <label htmlFor="itemsPerPage" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    Productos por página:
+                  </label>
+                  <select
+                    id="itemsPerPage"
+                    value={itemsPerPage}
+                    onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                  >
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={200}>200</option>
+                    <option value={500}>500</option>
+                  </select>
+                </div>
+                
+                {/* Filtro de Fulfillment */}
+                <div className="flex items-center gap-3">
+                  <label htmlFor="fulfillmentFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    Fulfillment:
+                  </label>
+                  <select
+                    id="fulfillmentFilter"
+                    value={fulfillmentFilter}
+                    onChange={(e) => setFulfillmentFilter(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white min-w-[160px]"
+                  >
+                    <option value="todos">Todos</option>
+                    <option value="full">📦 Full</option>
+                    <option value="flex">⚡ Flex</option>
+                    <option value="me">🚚 Mercado Envíos</option>
+                    <option value="normal">📍 Normal/Sin envío</option>
+                  </select>
+                </div>
+              </div>
+              
+              <div className="text-sm text-gray-600">
+                <span className="font-semibold">Total: {products.length.toLocaleString()}</span> productos cargados
+                {(searchTerm || fulfillmentFilter !== 'todos') && (
+                  <span> • Mostrando <span className="font-semibold">{filteredProducts.length}</span> resultados • Página {currentPage} de {totalPages}</span>
+                )}
+                {!searchTerm && fulfillmentFilter === 'todos' && (
+                  <span> • Viendo del <span className="font-semibold">{startItem}</span> al <span className="font-semibold">{endItem}</span></span>
+                )}
+              </div>
             </div>
-            <div className="bg-purple-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-600">Página</p>
-              <p className="text-2xl font-bold text-purple-600">{currentPage} / {totalPages}</p>
-            </div>
-            <div className="bg-yellow-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-600">Por Página</p>
-              <p className="text-2xl font-bold text-yellow-600">{itemsPerPage}</p>
-            </div>
-          </div>
-
-          <div className="flex gap-4 mb-4 flex-wrap">
-            <input
-              type="text"
-              placeholder="🔍 Buscar por título, ID o SKU..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="flex-1 min-w-[200px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-500"
-            />
-            
-            <select
-              value={fulfillmentFilter}
-              onChange={(e) => setFulfillmentFilter(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-500"
-            >
-              <option value="todos">Todos los envíos</option>
-              <option value="full">📦 Full</option>
-              <option value="flex">⚡ Flex</option>
-              <option value="mercadoenvios">📮 Mercado Envíos</option>
-              <option value="normal">Normal</option>
-            </select>
-
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-500"
-            >
-              <option value="todos">Todos los estados</option>
-              <option value="active">🟢 Activo</option>
-              <option value="paused">🟡 Pausado</option>
-              <option value="closed">🔴 Cerrado</option>
-              <option value="under_review">🔵 En revisión</option>
-              <option value="inactive">⚫ Inactivo</option>
-            </select>
-
-            <button
-              onClick={exportToExcel}
-              className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg whitespace-nowrap"
-            >
-              📥 Exportar Excel
-            </button>
-
-            {products.length < total && (
-              <button
-                onClick={loadMoreProducts}
-                disabled={loadingMore}
-                className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg whitespace-nowrap disabled:bg-gray-400"
-              >
-                {loadingMore ? '⏳ Cargando...' : `📦 Cargar más (${products.length}/${total})`}
-              </button>
-            )}
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-xl overflow-hidden">
+        {/* Products Table */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-yellow-500 text-white">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left">Producto</th>
-                  <th className="px-4 py-3 text-left">SKU</th>
-                  <th className="px-4 py-3 text-right">Precio</th>
-                  <th className="px-4 py-3 text-center">Stock</th>
-                  <th className="px-4 py-3 text-center">Ventas 60d</th>
-                  <th className="px-4 py-3 text-center">Envíos</th>
-                  <th className="px-4 py-3 text-center">Estado</th>
-                  <th className="px-4 py-3 text-center">Ver</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[450px] min-w-[450px]">
+                    Producto
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
+                    SKU
+                  </th>
+                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-16">
+                    Stock
+                  </th>
+                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
+                    Estado Stock
+                  </th>
+                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-36">
+                    Estado Publicación
+                  </th>
+                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
+                    Fulfillment
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
+                    Última actualización
+                  </th>
+                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-28">
+                    Precio
+                  </th>
                 </tr>
               </thead>
-              <tbody>
-                {paginatedProducts.map((product, index) => {
-                  const sku = product.attributes?.find(attr => attr.id === 'seller_sku')?.value_name || 'N/A';
-                  const sales60d = salesBySKU[sku] || 0;
-                  
-                  return (
-                    <tr key={product.id} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
-                      <td className="px-4 py-3">
-                        <a 
-                          href={product.permalink} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
-                        >
-                          {product.title}
-                        </a>
-                        <div className="text-xs text-gray-500">{product.id}</div>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-600">{sku}</td>
-                      <td className="px-4 py-3 text-right font-semibold">${product.price.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`font-bold ${product.available_quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {paginatedProducts.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-6 py-12 text-center">
+                      <div className="text-gray-400">
+                        <svg className="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                        </svg>
+                        <p className="text-sm">No se encontraron productos</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedProducts.map((product) => {
+                    const stockStatus = getStockStatus(product.available_quantity);
+                    const pubStatus = getPublicationStatus(product.status);
+
+                    return (
+                      <tr key={product.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-4">
+                          <div>
+                            <a
+                              href={product.permalink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 font-medium hover:underline"
+                            >
+                              {product.title}
+                            </a>
+                            <p className="text-xs text-gray-500 mt-1">{product.id}</p>
+                          </div>
+                        </td>
+                        <td className="px-3 py-4 text-sm text-gray-900">
+                          {getSellerSKU(product)}
+                        </td>
+                        <td className="px-3 py-4 text-sm font-semibold text-gray-900 text-center">
                           {product.available_quantity}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`font-bold ${sales60d > 0 ? 'text-blue-600' : 'text-gray-400'}`}>
-                          {loadingSales ? '...' : sales60d}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-center text-sm">{getFulfillmentType(product.shipping)}</td>
-                      <td className="px-4 py-3 text-center">{getStatusBadge(product.status)}</td>
-                      <td className="px-4 py-3 text-center">
-                        <a
-                          href={product.permalink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-500 hover:text-blue-700"
-                        >
-                          🔗
-                        </a>
-                      </td>
-                    </tr>
-                  );
-                })}
+                        </td>
+                        <td className="px-3 py-4 text-center">
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${stockStatus.color}`}>
+                            {stockStatus.label}
+                          </span>
+                        </td>
+                        <td className="px-3 py-4 text-center">
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${pubStatus.color}`}>
+                            {pubStatus.label}
+                          </span>
+                        </td>
+                        <td className="px-3 py-4 text-sm text-gray-900 text-center">
+                          {getFulfillmentType(product.shipping)}
+                        </td>
+                        <td className="px-3 py-4 text-xs text-gray-900">
+                          {formatDate(product.last_updated)}
+                        </td>
+                        <td className="px-3 py-4 text-sm font-semibold text-green-600 text-right">
+                          {formatPrice(product.price)}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
+        </div>
 
-          <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-t">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-600">Mostrar:</span>
-              <select
-                value={itemsPerPage}
-                onChange={(e) => setItemsPerPage(Number(e.target.value))}
-                className="px-3 py-1 border rounded"
-              >
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-                <option value={200}>200</option>
-              </select>
-              <span className="text-sm text-gray-600">por página</span>
-            </div>
+        {/* Paginación */}
+        {totalPages > 1 && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mt-6">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              {/* Información de página */}
+              <div className="text-sm text-gray-600">
+                Página <span className="font-semibold">{currentPage}</span> de <span className="font-semibold">{totalPages}</span>
+              </div>
 
-            <div className="flex gap-2">
-              <button
-                onClick={() => setCurrentPage(1)}
-                disabled={currentPage === 1}
-                className={`px-3 py-1 rounded ${currentPage === 1 ? 'bg-gray-200' : 'bg-yellow-500 text-white hover:bg-yellow-600'}`}
-              >
-                ⏮️
-              </button>
-              
-              <button
-                onClick={() => setCurrentPage(currentPage - 1)}
-                disabled={currentPage === 1}
-                className={`px-3 py-1 rounded ${currentPage === 1 ? 'bg-gray-200' : 'bg-yellow-500 text-white hover:bg-yellow-600'}`}
-              >
-                ◀️
-              </button>
+              {/* Botones de navegación */}
+              <div className="flex items-center gap-2">
+                {/* Primera página */}
+                <button
+                  onClick={() => handlePageChange(1)}
+                  disabled={currentPage === 1}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition"
+                  title="Primera página"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                  </svg>
+                </button>
 
-              <span className="px-4 py-1 bg-white border rounded">
-                {currentPage} / {totalPages}
-              </span>
+                {/* Página anterior */}
+                <button
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition"
+                >
+                  Anterior
+                </button>
 
-              <button
-                onClick={() => setCurrentPage(currentPage + 1)}
-                disabled={currentPage === totalPages}
-                className={`px-3 py-1 rounded ${currentPage === totalPages ? 'bg-gray-200' : 'bg-yellow-500 text-white hover:bg-yellow-600'}`}
-              >
-                ▶️
-              </button>
+                {/* Páginas numeradas */}
+                <div className="hidden sm:flex items-center gap-1">
+                  {/* Primera página siempre visible */}
+                  {currentPage > 3 && (
+                    <>
+                      <button
+                        onClick={() => handlePageChange(1)}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition"
+                      >
+                        1
+                      </button>
+                      {currentPage > 4 && <span className="px-2 text-gray-500">...</span>}
+                    </>
+                  )}
 
-              <button
-                onClick={() => setCurrentPage(totalPages)}
-                disabled={currentPage === totalPages}
-                className={`px-3 py-1 rounded ${currentPage === totalPages ? 'bg-gray-200' : 'bg-yellow-500 text-white hover:bg-yellow-600'}`}
-              >
-                ⏭️
-              </button>
+                  {/* Páginas cercanas a la actual */}
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    const pageNum = currentPage <= 3 
+                      ? i + 1 
+                      : currentPage >= totalPages - 2
+                        ? totalPages - 4 + i
+                        : currentPage - 2 + i;
+                    
+                    if (pageNum < 1 || pageNum > totalPages) return null;
+                    
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => handlePageChange(pageNum)}
+                        className={`px-3 py-2 border rounded-lg text-sm font-medium transition ${
+                          currentPage === pageNum
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+
+                  {/* Última página siempre visible */}
+                  {currentPage < totalPages - 2 && (
+                    <>
+                      {currentPage < totalPages - 3 && <span className="px-2 text-gray-500">...</span>}
+                      <button
+                        onClick={() => handlePageChange(totalPages)}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition"
+                      >
+                        {totalPages}
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {/* Página siguiente */}
+                <button
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition"
+                >
+                  Siguiente
+                </button>
+
+                {/* Última página */}
+                <button
+                  onClick={() => handlePageChange(totalPages)}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition"
+                  title="Última página"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Input para ir a página específica */}
+              <div className="flex items-center gap-2">
+                <label htmlFor="goToPage" className="text-sm text-gray-600 whitespace-nowrap">
+                  Ir a página:
+                </label>
+                <input
+                  id="goToPage"
+                  type="number"
+                  min="1"
+                  max={totalPages}
+                  placeholder={currentPage.toString()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const page = parseInt((e.target as HTMLInputElement).value);
+                      if (page >= 1 && page <= totalPages) {
+                        handlePageChange(page);
+                        (e.target as HTMLInputElement).value = '';
+                      }
+                    }
+                  }}
+                  className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        )}
+      </main>
     </div>
   );
 }
